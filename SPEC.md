@@ -44,17 +44,18 @@
 * **Tek Harici Bağımlılık:** `libsodium` (>= 1.0.18; Argon2id, XChaCha20-Poly1305-IETF ve `sodium_stackzero` desteği için).
 * **Hata Yönetimi Sözleşmesi:**
   * Tüm hedefler (testler dahil) `-fno-exceptions -fno-rtti` ile derlenir; kod tabanında `try`, `catch`, `throw` kullanılmaz.
-  * Sıfır bağımlılıklı, `std::variant` tabanlı ve `[[nodiscard]]` işaretli `nilkey::Result<T, Error>` (ve değer döndürmeyen işlemler için `nilkey::Status`) kullanılır.
+  * Sıfır bağımlılıklı, `std::variant` tabanlı ve `[[nodiscard]]` işaretli `nilkey::Result<T, Error>` (ve değer döndürmeyen işlemler için `nilkey::Status`) kullanılır. Değere erişim `std::get_if` ile yapılır; `std::get` kullanılmaz (`-fno-exceptions` altında yanlış alternatifte `abort` eder), yanlış erişim açıkça `std::abort()` ile sonlanır.
   * `Error` yapısı yalnızca yapısal `ErrorCode` (`enum class`) ve sabit statik açıklama içerir; hata nesnelerine asla parola, anahtar veya açık veri parçası yazılmaz.
-* **Test Çatısı:** `tests/test_framework.hpp` (tek dosyalık, harici bağımlılıksız hafif test makroları) + CMake `CTest`.
-* **Zorunlu Derleyici Bayrakları:** `-Wall -Wextra -Werror -Wpedantic -Wconversion -Wshadow -fno-exceptions -fno-rtti`.
-* **Sanitizer Kapısı (Debug / Test):** `-fsanitize=address,undefined -fno-omit-frame-pointer` (ASan + UBSan) zorunludur; tüm testler sıfır bulguyla geçmelidir.
+* **Test Çatısı:** `tests/test_framework.hpp` (tek dosyalık, harici bağımlılıksız hafif test makroları) + CMake `CTest`. Çatı `-fno-exceptions` uyumlu, `return` tabanlı doğrulama makroları kullanır; hata çıktısına değer basmaz (yalnızca ifade metni ve `dosya:satır`); sır içeren baytları `sodium_memcmp` tabanlı makroyla karşılaştırır (bu nedenle test hedefleri de `libsodium`'a bağlanır).
+* **Zorunlu Derleyici Bayrakları:** `-Wall -Wextra -Werror -Wpedantic -Wconversion -Wshadow -fno-exceptions -fno-rtti`. `-Werror`, paketleyicilerin yeni derleyici sürümlerinde kırılmaması için `NILKEY_WERROR` CMake seçeneğiyle (varsayılan `ON`) kapatılabilir; geliştirme ve CI derlemeleri `ON` kalır.
+* **Sanitizer Kapısı (Debug / Test):** `-fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=all` (ASan + UBSan) zorunludur; `-fno-sanitize-recover=all` olmadan UBSan bulguyu yazıp çıkış kodu 0 ile devam eder. Tüm testler sıfır bulguyla geçmelidir. CTest ortamı `ASAN_OPTIONS` / `UBSAN_OPTIONS` değerlerini CMake'ten alır.
 * **Sertleştirme Bayrakları (Release):** `-O2 -fstack-protector-strong -D_FORTIFY_SOURCE=2 -fPIE` ve linker tarafında `-Wl,-z,relro,-z,now`.
 
 ### Önerilen Açık Kaynak Dizin Yapısı
 ```text
 nilkey/
 ├── CMakeLists.txt
+├── .gitignore
 ├── LICENSE
 ├── README.md
 ├── SPEC.md
@@ -88,7 +89,7 @@ nilkey/
 * **Tuz (Salt):** `16 byte` (`crypto_pwhash_SALTBYTES`), `randombytes_buf` ile yalnızca `init` ve `passwd` işlemlerinde üretilir.
 * **Çıktı Anahtarı:** `32 byte` (256 bit).
 * **Varsayılan Maliyet Parametreleri:**
-  * `mem_kib = 65536` (64 MiB — RFC 9106 bellek kısıtlı sistem önerisiyle uyumlu, OWASP minimumlarının üzerinde).
+  * `mem_kib = 65536` (64 MiB — RFC 9106'nın bellek kısıtlı sistem önerisindeki bellek ve geçiş değerleriyle aynı, OWASP minimumlarının üzerinde. *Not:* RFC'nin bu önerisi `p = 4` kullanır; `libsodium` `p = 1` sabitlediği için V1 bu parametre kümesiyle birebir aynı değildir.)
   * `iterations = 3` (`opslimit = 3`).
   * `parallelism = 1` (**`libsodium` API Notu:** `libsodium`'un `crypto_pwhash()` API'si dahili olarak `p = 1` ile çalışır ve dışarıdan paralellik parametresi almaz. İleriye dönük format uyumluluğu için başlıkta 4 byte `kdf_parallelism` alanı korunur; V1 yazarken `1` yazar, okurken `kdf_parallelism != 1` ise desteklenmeyen parametre hatası döndürür).
 * **Parametre Sınır Denetimi (Downgrade & OOM Koruması):**
@@ -187,6 +188,8 @@ Uygulama herhangi bir kasa veya parola verisini okumadan önce sırasıyla şunl
 * **Varsayılan Mod (Katı / Fail-Closed):** `sodium_mlock()` `-1` (`ENOMEM` / `EPERM`) döndürürse işlem derhal durdurulur, hassas tampon serbest bırakılır ve `stderr`'e `RLIMIT_MEMLOCK` limitinin yetersiz olduğunu açıklayan, kullanıcıyı `nilkey doctor` komutuna (ve `ulimit -l` kontrolüne) yönlendiren net bir hata basılır.
 * **Bilinçli Geçersiz Kılma (`--allow-unlocked-memory`):** Kullanıcı bu global bayrağı açıkça verirse, `stderr`'e belleğin swap dışına kilitlenemediğine dair görünür bir uyarı yazılarak çalışmaya devam edilir.
 
+**Bilinen Sınırlama (Argon2 Çalışma Belleği):** `libsodium` Argon2id çalışma belleğini (`mem_kib`, varsayılan 64 MiB) kendi içinde ayırır ve en-iyi-çaba `mlock` dener; başarısızlığı yutar. Bu bellek son anahtarı üreten blokları içerdiğinden, yukarıdaki fail-closed politikası bu alanı **kapsamaz**. Azaltım: `nilkey doctor`, `RLIMIT_MEMLOCK` değerinin `mem_kib` için yeterli olup olmadığını raporlar; `init`/kasa açma sırasında bu ön kontrolün ne kadar katı olacağı (uyarı mı hata mı) Faz 2'de kararlaştırılır. Ayrıca 16 MiB'a kadar yük, tipik 8 MiB `RLIMIT_MEMLOCK` değerinde fail-closed modda açılamayabilir.
+
 ---
 
 ## 8. Atomik Dosya Kaydı ve İzin Politikası
@@ -200,6 +203,10 @@ Kasa dosyası her zaman `0600` (yalnızca sahip okuma/yazma) izinleriyle tutulur
 4. `rename(temp_path, vault_path)` ile eski dosya atomik olarak yenisiyle değiştirilir.
 5. Üst dizin (`O_RDONLY | O_DIRECTORY`) açılır, `fsync(dir_fd)` çağrılır ve kapatılır.
 6. `rename` öncesinde herhangi bir hata oluşursa geçici dosya `unlink` ile silinir ve mevcut kasa dosyasına hiç dokunulmaz.
+
+**Açık Maddeler (Faz 2'de karara bağlanacak):**
+* **Symlink:** Kasa yolu bir symlink ise `rename` symlink'i normal dosyayla değiştirir. Seçenekler: hedefi `realpath` ile çözüp onun dizininde yazmak veya symlink'i reddetmek.
+* **Eşzamanlı yazma:** İki `nilkey` süreci aynı kasayı değiştirirse son yazan kazanır. Kasa yanında bir kilit dosyası üzerinde `flock` düşünülmelidir.
 
 ---
 
@@ -239,7 +246,7 @@ Kasa dosyası her zaman `0600` (yalnızca sahip okuma/yazma) izinleriyle tutulur
 
 Tüm testler `tests/test_framework.hpp` + `CTest` ile ve **ASan + UBSan** etkinleştirilmiş `-fno-exceptions` derlemesi altında eksiksiz geçmelidir:
 
-1. **Bit-Flipping / Tampering:** 66-byte başlığın her alanı (magic, version, KDF parametreleri, salt, nonce, payload_len), ciphertext gövdesi ve 16-byte Auth Tag içindeki tek bitlik değişikliklerin tamamı reddedilmelidir.
+1. **Bit-Flipping / Tampering:** 66-byte başlığın her alanı (magic, version, KDF parametreleri, salt, nonce, payload_len), ciphertext gövdesi ve 16-byte Auth Tag içindeki tek bitlik değişikliklerin tamamı reddedilmelidir. *Test maliyeti notu:* `kdf_mem_kib` içindeki bit çevirmeleri geçerli aralıkta çok büyük değerler üretebilir (ör. tek bit ~1 GiB Argon2 çalıştırır). Testler yalnızca test hedefine özel bir derleme zamanı üst sınır makrosu (ör. `NILKEY_TEST_MAX_KDF_MEM_KIB`) ile bu koşuları reddettirir; bu makro ana `nilkey` ikilisinde tanımlanmaz.
 2. **Sıfır Bilgi Doğrulaması:** Yanlış ana parola verildiğinde hata dönmeli ve dışarıya sıfır bayt açık veri çıkarılmamalıdır.
 3. **Nonce Benzersizliği:** Ardışık kayıt/güncelleme işlemlerinde dosya başlığındaki 24 byte nonce değerinin her seferinde değiştiği doğrulanmalıdır.
 4. **Re-Keying (`passwd`):** Ana parola değişikliği sonrasında hem 16 byte salt hem 24 byte nonce değişmeli, eski parola reddedilmeli ve yeni parola tüm kayıtları eksiksiz çözmelidir.
