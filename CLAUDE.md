@@ -87,6 +87,12 @@ cmake --build build-release -j
 * ASan / UBSan bulgu sayısı: **0**.
 * Başarısız test sayısı: **0**.
 
+**Sanitizer ve test kuralları:**
+* Sanitizer derlemesi `-fno-sanitize-recover=all` ile yapılır; aksi halde UBSan bulguyu yazıp çıkış kodu 0 ile devam eder ve "0 bulgu" kriteri CTest'te zorlanmaz. CTest ortamı `ASAN_OPTIONS` / `UBSAN_OPTIONS` değerlerini CMake'ten alır, elle ayarlanmaz.
+* `Result`/`Status` erişimi `std::get_if` ile yapılır; `std::get` kullanılmaz (`-fno-exceptions` altında yanlış alternatifte sessizce `abort` eder).
+* Test çatısı hata mesajına değer basmaz (yalnızca ifade metni ve `dosya:satır`); sır içeren baytlar `sodium_memcmp` tabanlı makroyla karşılaştırılır.
+* Yeni davranış yeni test gerektirir. Yeni test dosyası `CMakeLists.txt` içindeki ilgili hedefe eklenir.
+
 ---
 
 ## 5. Faz Sonu Güvenlik Öz-Denetim Raporu
@@ -103,3 +109,33 @@ Her fazın kodlaması ve test koşusu bittikten sonra kullanıcıya kısa bir **
 
 * **Mevcut Faz:** Faz 0 (Proje İskeleti ve Derleme Kapısı)
 * **Tamamlanan Fazlar:** Henüz yok.
+
+---
+
+## 7. Git İş Akışı
+
+Geçmiş temiz tutulur: mantıksal noktalarda küçük, açıklayıcı commitler; tek commit = tek mantıksal değişiklik. Refactor, davranış değişikliği ve testler ayrı commit'lerdir ki inceleyen kod parça parça okuyabilsin. Commit mesajları ve PR metinleri **İngilizce**'dir.
+
+* `main`'e doğrudan commit veya push **yok**. `<tür>/<kısa-açıklama>` biçiminde topic branch (ör. `build/phase-0-skeleton`, `docs/project-conventions`) → push → `gh pr create` (Summary + Test plan) → CI geçince PR ile merge → branch sil. Bir PR tek kaygı taşır.
+* **Merge yöntemi: rebase-merge** (doğrusal geçmiş, atomik commitler korunur). İstisna: PR'ın commitleri dağınık/WIP ise squash-merge; squash mesajı da aşağıdaki formata uymalıdır. Düz merge commit kullanılmaz.
+* Commit'lemeden önce kullanıcıya sor; push, tag ve release dışa dönük işlemlerdir, yalnızca kullanıcı isterse yapılır.
+* Her commit tek mantıksal değişikliktir, derlenir ve testleri geçer. PR'da WIP/fixup commit bırakılmaz (push öncesi `--amend`).
+* Asla secret, anahtar, `.vault` dosyası veya derleme çıktısı commit'lenmez; ilgisiz biçimlendirme değişikliği yapılmaz.
+
+### Commit mesajları
+
+Conventional Commits 1.0:
+
+* Konu: `<tür>(<opsiyonel-kapsam>): <emir kipi özet>`. Emir kipi ("add", "added" değil), iki noktadan sonra küçük harf, en fazla 72 karakter, sonda nokta yok. Kapsam modül/alanı belirtir (ör. `core`, `crypto`, `cli`).
+* Türler: `feat`, `fix`, `perf`, `refactor`, `docs`, `test`, `build`, `ci`, `chore`, `style`, `revert`.
+* Gövde (boş satırdan sonra, ~72 sütun): ne ve **neden**, nasıl değil. Önemsiz tek satırlıklar dışında zorunlu.
+* Kırıcı değişiklik: tür/kapsamdan sonra `!` ve `BREAKING CHANGE:` altbilgisi. Issue'lar altbilgide (`Fixes #123`, `Refs #123`).
+* PR başlığı aynı formatı izler; PR gövdesi **Summary** (ne ve neden) ve **Test plan** (çalıştırılan derleme/ctest komutları) içerir.
+
+### Sürümler
+
+* SemVer 2.0 `MAJOR.MINOR.PATCH`: `feat` → MINOR, `fix`/`perf` → PATCH, kırıcı değişiklik → MAJOR (1.0.0 öncesinde MINOR). Ön sürümler `-rc.1`, `-beta.1`. Vault dosya formatı sürümü (`version` alanı) uygulama sürümünden bağımsızdır.
+* Tag: `vX.Y.Z` annotated (`git tag -a v1.2.0 -m "v1.2.0"`), yalnızca release PR'ı merge edildikten sonra varsayılan dalda. Yayımlanmış tag asla taşınmaz/silinmez; yeni patch çıkarılır.
+* `CHANGELOG.md`: Keep a Changelog biçimi (`Added`, `Changed`, `Deprecated`, `Removed`, `Fixed`, `Security`; en yeni üstte, `Unreleased` en üstte), son tag'den bu yana Conventional Commits'ten türetilir.
+* Release PR'ı: `chore(release): vX.Y.Z` başlıklı, yalnızca sürümü yükseltir ve `Unreleased`'ı yeni sürüm bölümüne taşır.
+* GitHub Release: `gh release create vX.Y.Z --title "vX.Y.Z" --notes-file <notes>`; ön sürümlerde `--prerelease`. Tag/release yalnızca kullanıcı isterse.
