@@ -1,0 +1,21 @@
+# Build output
+build*/
+.cache/
+compile_commands.json
+CMakeCache.txt
+CMakeFiles/
+*.o
+*.a
+
+# Never commit vault files or key material
+*.vault
+*.key
+
+# Local backups made before edits
+*.bak-*
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*~
