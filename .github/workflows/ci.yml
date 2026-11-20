@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.cxx }} / ${{ matrix.profile }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        cxx: [g++-13, clang++-18]
+        profile: [debug-sanitizers, release]
+    env:
+      CXX: ${{ matrix.cxx }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends cmake pkg-config libsodium-dev
+
+      # Recent runner kernels use a wider ASLR range than ASan supports.
+      - name: Lower mmap ASLR entropy for ASan
+        if: matrix.profile == 'debug-sanitizers'
+        run: sudo sysctl vm.mmap_rnd_bits=28
+
+      - name: Configure
+        run: |
+          if [ "${{ matrix.profile }}" = debug-sanitizers ]; then
+            cmake -B build -DCMAKE_BUILD_TYPE=Debug -DNILKEY_ENABLE_SANITIZERS=ON
+          else
+            cmake -B build -DCMAKE_BUILD_TYPE=Release -DNILKEY_ENABLE_SANITIZERS=OFF
+          fi
+
+      - name: Build (warnings are errors)
+        run: cmake --build build -j
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Check release hardening
+        if: matrix.profile == 'release'
+        run: |
+          readelf -hW build/nilkey | grep -q 'Type:.*DYN'
+          readelf -lW build/nilkey | grep -q GNU_RELRO
+          readelf -dW build/nilkey | grep -q BIND_NOW
