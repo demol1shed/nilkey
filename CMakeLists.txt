@@ -64,3 +64,6 @@ target_link_libraries(nilkey_core INTERFACE nilkey_options PkgConfig::SODIUM)
 add_executable(nilkey src/main.cpp)
 target_compile_definitions(nilkey PRIVATE NILKEY_VERSION="${PROJECT_VERSION}")
 target_link_libraries(nilkey PRIVATE nilkey_core)
+
+enable_testing()
+add_subdirectory(tests)
