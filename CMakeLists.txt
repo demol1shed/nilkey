@@ -56,10 +56,10 @@ target_compile_options(nilkey_options INTERFACE
 target_link_options(nilkey_options INTERFACE
   $<$<CONFIG:Release>:-Wl,-z,relro,-z,now>)
 
-# Header-only until later phases add sources.
-add_library(nilkey_core INTERFACE)
-target_include_directories(nilkey_core INTERFACE ${PROJECT_SOURCE_DIR}/include)
-target_link_libraries(nilkey_core INTERFACE nilkey_options PkgConfig::SODIUM)
+add_library(nilkey_core STATIC
+  src/secure_buffer.cpp)
+target_include_directories(nilkey_core PUBLIC ${PROJECT_SOURCE_DIR}/include)
+target_link_libraries(nilkey_core PUBLIC nilkey_options PkgConfig::SODIUM)
 
 add_executable(nilkey src/main.cpp)
 target_compile_definitions(nilkey PRIVATE NILKEY_VERSION="${PROJECT_VERSION}")
