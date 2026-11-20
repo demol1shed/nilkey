@@ -57,6 +57,7 @@ target_link_options(nilkey_options INTERFACE
   $<$<CONFIG:Release>:-Wl,-z,relro,-z,now>)
 
 add_library(nilkey_core STATIC
+  src/hardening.cpp
   src/secure_buffer.cpp)
 target_include_directories(nilkey_core PUBLIC ${PROJECT_SOURCE_DIR}/include)
 target_link_libraries(nilkey_core PUBLIC nilkey_options PkgConfig::SODIUM)
