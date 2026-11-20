@@ -23,6 +23,7 @@ endfunction()
 
 nilkey_add_test(test_result)
 nilkey_add_test(test_secure_buffer)
+nilkey_add_test(test_hardening)
 
 # Sanitizer runtimes intercept mlock() and always report success, so the
 # lock-failure policy can only be tested without them.
