@@ -10,6 +10,10 @@ enum class ErrorCode : std::uint8_t {
   kInvalidArgument,
   kOutOfRange,
   kInternal,
+  kAllocationFailed,
+  kMemoryLockFailed,
+  kMemoryProtectFailed,
+  kHardeningFailed,
 };
 
 // Carries a code and a static description. It never holds passwords, keys or
@@ -27,6 +31,14 @@ constexpr const char* describe(ErrorCode code) {
       return "value out of range";
     case ErrorCode::kInternal:
       return "internal error";
+    case ErrorCode::kAllocationFailed:
+      return "secure memory allocation failed";
+    case ErrorCode::kMemoryLockFailed:
+      return "cannot lock memory (RLIMIT_MEMLOCK too low); run `nilkey doctor` and check `ulimit -l`";
+    case ErrorCode::kMemoryProtectFailed:
+      return "cannot change secure memory protection";
+    case ErrorCode::kHardeningFailed:
+      return "process hardening failed";
   }
   return "unknown error";
 }
