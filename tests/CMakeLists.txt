@@ -22,6 +22,13 @@ function(nilkey_add_expected_failure test_name exe arg pattern)
 endfunction()
 
 nilkey_add_test(test_result)
+nilkey_add_test(test_secure_buffer)
+
+# Sanitizer runtimes intercept mlock() and always report success, so the
+# lock-failure policy can only be tested without them.
+if(NOT NILKEY_ENABLE_SANITIZERS)
+  nilkey_add_test(test_memlock_policy)
+endif()
 
 # Gate self-checks: each of these must fail for the stated reason.
 add_executable(test_framework_failure test_framework_failure.cpp)
