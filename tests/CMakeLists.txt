@@ -21,6 +21,7 @@ function(nilkey_add_expected_failure test_name exe arg pattern)
   set_tests_properties(${test_name} PROPERTIES ENVIRONMENT "${NILKEY_TEST_ENVIRONMENT}")
 endfunction()
 
+nilkey_add_test(test_result)
 
 # Gate self-checks: each of these must fail for the stated reason.
 add_executable(test_framework_failure test_framework_failure.cpp)
