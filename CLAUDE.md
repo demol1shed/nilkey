@@ -107,8 +107,8 @@ Her fazın kodlaması ve test koşusu bittikten sonra kullanıcıya kısa bir **
 
 ## 6. Faz Takibi
 
-* **Mevcut Faz:** Faz 0 (Proje İskeleti ve Derleme Kapısı)
-* **Tamamlanan Fazlar:** Henüz yok.
+* **Mevcut Faz:** Faz 1 (Güvenli Bellek ve Süreç Sertleştirme)
+* **Tamamlanan Fazlar:** Faz 0 (Proje İskeleti ve Derleme Kapısı), PR #2.
 
 ---
 
