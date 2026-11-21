@@ -1,3 +1,6 @@
+// Built against nilkey_core_test: the round trip tests derive keys with the
+// fast test-only KDF limits.
+
 #include <dirent.h>
 #include <fcntl.h>
 #include <sys/stat.h>
@@ -9,10 +12,18 @@
 #include <string>
 #include <vector>
 
+#include <array>
+#include <span>
+
 #include "nilkey/atomic_file.hpp"
+#include "nilkey/crypto.hpp"
+#include "nilkey/vault_format.hpp"
 #include "test_framework.hpp"
 
 using nilkey::ErrorCode;
+using nilkey::MemlockPolicy;
+using nilkey::ReadVaultFile;
+using nilkey::ScopedReadGuard;
 using nilkey::Status;
 using nilkey::WriteFileAtomic;
 
@@ -264,6 +275,177 @@ NILKEY_TEST(write_rejects_null_and_empty_path) {
   const auto empty_result = WriteFileAtomic("", Bytes(1, 1));
   NILKEY_EXPECT(!empty_result.ok());
   NILKEY_EXPECT(empty_result.error().code == ErrorCode::kInvalidArgument);
+}
+
+NILKEY_TEST(read_returns_file_content) {
+  TempDir dir;
+  NILKEY_EXPECT(dir.ok());
+  const std::string path = dir.Path("vault.bin");
+  const auto data = Bytes(5000, 0x6B);
+  NILKEY_EXPECT(CreateWithMode(path, data, 0600));
+  auto read = ReadVaultFile(path.c_str());
+  NILKEY_EXPECT(read.ok());
+  NILKEY_EXPECT_SECRET_EQ(read.value(), data);
+}
+
+NILKEY_TEST(read_returns_empty_file_as_empty) {
+  // Rejecting a file that is too short is the header parser's job.
+  TempDir dir;
+  NILKEY_EXPECT(dir.ok());
+  const std::string path = dir.Path("vault.bin");
+  NILKEY_EXPECT(CreateWithMode(path, {}, 0600));
+  auto read = ReadVaultFile(path.c_str());
+  NILKEY_EXPECT(read.ok());
+  NILKEY_EXPECT(read.value().empty());
+}
+
+NILKEY_TEST(read_missing_file_is_io_error) {
+  TempDir dir;
+  NILKEY_EXPECT(dir.ok());
+  const std::string path = dir.Path("missing.bin");
+  const auto read = ReadVaultFile(path.c_str());
+  NILKEY_EXPECT(!read.ok());
+  NILKEY_EXPECT(read.error().code == ErrorCode::kIoError);
+}
+
+NILKEY_TEST(read_rejects_symlink) {
+  TempDir dir;
+  NILKEY_EXPECT(dir.ok());
+  NILKEY_EXPECT(CreateWithMode(dir.Path("real.bin"), Bytes(10, 1), 0600));
+  const std::string link = dir.Path("link.bin");
+  NILKEY_EXPECT(symlink("real.bin", link.c_str()) == 0);
+  const auto read = ReadVaultFile(link.c_str());
+  NILKEY_EXPECT(!read.ok());
+  NILKEY_EXPECT(read.error().code == ErrorCode::kSymlinkRejected);
+}
+
+NILKEY_TEST(read_rejects_directory_and_fifo) {
+  TempDir dir;
+  NILKEY_EXPECT(dir.ok());
+  const std::string sub = dir.Path("subdir");
+  NILKEY_EXPECT(mkdir(sub.c_str(), 0700) == 0);
+  const auto from_dir = ReadVaultFile(sub.c_str());
+  NILKEY_EXPECT(!from_dir.ok());
+  NILKEY_EXPECT(from_dir.error().code == ErrorCode::kInvalidFormat);
+
+  // Must return at once: a blocking open of a FIFO with no writer would hang.
+  const std::string fifo = dir.Path("fifo");
+  NILKEY_EXPECT(mkfifo(fifo.c_str(), 0600) == 0);
+  const auto from_fifo = ReadVaultFile(fifo.c_str());
+  NILKEY_EXPECT(!from_fifo.ok());
+  NILKEY_EXPECT(from_fifo.error().code == ErrorCode::kInvalidFormat);
+}
+
+NILKEY_TEST(read_rejects_oversized_file_without_reading_it) {
+  // A sparse file one byte over the limit: no data is stored and none may be
+  // allocated or read.
+  TempDir dir;
+  NILKEY_EXPECT(dir.ok());
+  const std::string path = dir.Path("big.bin");
+  const int fd = open(path.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+  NILKEY_EXPECT(fd >= 0);
+  const off_t limit = static_cast<off_t>(nilkey::kHeaderSize + nilkey::kMaxPayloadSize);
+  NILKEY_EXPECT(ftruncate(fd, limit + 1) == 0);
+  NILKEY_EXPECT(close(fd) == 0);
+  const auto too_big = ReadVaultFile(path.c_str());
+  NILKEY_EXPECT(!too_big.ok());
+  NILKEY_EXPECT(too_big.error().code == ErrorCode::kInvalidFormat);
+
+  // Exactly at the limit is accepted (the header parser decides after that).
+  NILKEY_EXPECT(truncate(path.c_str(), limit) == 0);
+  const auto at_limit = ReadVaultFile(path.c_str());
+  NILKEY_EXPECT(at_limit.ok());
+  NILKEY_EXPECT(at_limit.value().size() == static_cast<std::size_t>(limit));
+}
+
+NILKEY_TEST(read_rejects_null_and_empty_path) {
+  const auto null_result = ReadVaultFile(nullptr);
+  NILKEY_EXPECT(!null_result.ok());
+  NILKEY_EXPECT(null_result.error().code == ErrorCode::kInvalidArgument);
+  const auto empty_result = ReadVaultFile("");
+  NILKEY_EXPECT(!empty_result.ok());
+  NILKEY_EXPECT(empty_result.error().code == ErrorCode::kInvalidArgument);
+}
+
+// SPEC.md 10 item 5, end to end: Seal -> disk -> read -> open.
+namespace {
+
+constexpr nilkey::KdfParams kFast = {8, 1};
+constexpr MemlockPolicy kRequire = MemlockPolicy::kRequire;
+constexpr std::array<std::byte, 6> kPassword = {std::byte{'s'}, std::byte{0x00}, std::byte{'e'},
+                                                std::byte{'c'}, std::byte{0xC3}, std::byte{0xA9}};
+constexpr std::array<std::byte, 5> kPlain = {std::byte{'v'}, std::byte{0x00}, std::byte{'a'},
+                                             std::byte{'u'}, std::byte{'l'}};
+
+bool PlaintextIs(const nilkey::SecureBuffer& buf, std::span<const std::byte> expected) {
+  auto guard = ScopedReadGuard::Open(buf);
+  if (!guard.ok()) return false;
+  return nilkey::test::secret_equal(guard.value().bytes(), expected);
+}
+
+}  // namespace
+
+NILKEY_TEST(vault_round_trips_through_disk) {
+  TempDir dir;
+  NILKEY_EXPECT(dir.ok());
+  const std::string path = dir.Path("vault.bin");
+  auto key = nilkey::NewVaultKey(kPassword, kFast, kRequire);
+  NILKEY_EXPECT(key.ok());
+  auto sealed = nilkey::Seal(key.value(), kPlain);
+  NILKEY_EXPECT(sealed.ok());
+  NILKEY_EXPECT(WriteFileAtomic(path.c_str(), sealed.value()).ok());
+  NILKEY_EXPECT(ModeOf(path) == 0600);
+
+  auto read = ReadVaultFile(path.c_str());
+  NILKEY_EXPECT(read.ok());
+  auto opened = nilkey::OpenWithPassword(read.value(), kPassword, kRequire);
+  NILKEY_EXPECT(opened.ok());
+  NILKEY_EXPECT(PlaintextIs(opened.value().plaintext, kPlain));
+}
+
+NILKEY_TEST(truncated_and_padded_vault_files_are_rejected) {
+  TempDir dir;
+  NILKEY_EXPECT(dir.ok());
+  auto key = nilkey::NewVaultKey(kPassword, kFast, kRequire);
+  NILKEY_EXPECT(key.ok());
+  auto sealed = nilkey::Seal(key.value(), kPlain);
+  NILKEY_EXPECT(sealed.ok());
+
+  std::vector<std::byte> truncated = sealed.value();
+  truncated.pop_back();
+  std::vector<std::byte> padded = sealed.value();
+  padded.push_back(std::byte{0});
+  const std::vector<std::byte>* const variants[] = {&truncated, &padded};
+  for (const std::vector<std::byte>* bytes : variants) {
+    const std::string path = dir.Path("bad.bin");
+    NILKEY_EXPECT(WriteFileAtomic(path.c_str(), *bytes).ok());
+    auto read = ReadVaultFile(path.c_str());
+    NILKEY_EXPECT(read.ok());  // The read layer is size-agnostic below the limit.
+    NILKEY_EXPECT(!nilkey::OpenWithPassword(read.value(), kPassword, kRequire).ok());
+    NILKEY_EXPECT(unlink(path.c_str()) == 0);
+  }
+}
+
+NILKEY_TEST(each_save_writes_a_fresh_nonce) {
+  // Nonce lives at header offset 38 (SPEC.md 5.1).
+  TempDir dir;
+  NILKEY_EXPECT(dir.ok());
+  const std::string path = dir.Path("vault.bin");
+  auto key = nilkey::NewVaultKey(kPassword, kFast, kRequire);
+  NILKEY_EXPECT(key.ok());
+  std::array<std::byte, nilkey::kNonceSize> previous{};
+  for (int save = 0; save < 3; ++save) {
+    auto sealed = nilkey::Seal(key.value(), kPlain);
+    NILKEY_EXPECT(sealed.ok());
+    NILKEY_EXPECT(WriteFileAtomic(path.c_str(), sealed.value()).ok());
+    auto read = ReadVaultFile(path.c_str());
+    NILKEY_EXPECT(read.ok());
+    NILKEY_EXPECT(read.value().size() >= nilkey::kHeaderSize);
+    std::array<std::byte, nilkey::kNonceSize> nonce{};
+    for (std::size_t i = 0; i < nonce.size(); ++i) nonce[i] = read.value()[38 + i];
+    if (save > 0) NILKEY_EXPECT(!nilkey::test::secret_equal(nonce, previous));
+    previous = nonce;
+  }
 }
 
 NILKEY_TEST_MAIN()
