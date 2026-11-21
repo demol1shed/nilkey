@@ -247,6 +247,13 @@ Status TlvWriter::PutField(std::uint8_t type, std::span<const std::byte> value) 
   return Ok();
 }
 
+Status TlvWriter::PutRaw(std::span<const std::byte> bytes) {
+  if (out_.size() - pos_ < bytes.size()) return make_error(ErrorCode::kOutOfRange);
+  std::copy(bytes.begin(), bytes.end(), out_.begin() + static_cast<std::ptrdiff_t>(pos_));
+  pos_ += bytes.size();
+  return Ok();
+}
+
 Status TlvWriter::PutInt64Field(std::uint8_t type, std::int64_t value) {
   std::array<std::byte, kTimestampSize> raw{};
   const auto bits = static_cast<std::uint64_t>(value);
