@@ -190,6 +190,24 @@ Uygulama herhangi bir kasa veya parola verisini okumadan önce sırasıyla şunl
 
 **Bilinen Sınırlama (Argon2 Çalışma Belleği):** `libsodium` Argon2id çalışma belleğini (`mem_kib`, varsayılan 64 MiB) kendi içinde ayırır ve en-iyi-çaba `mlock` dener; başarısızlığı yutar. Bu bellek son anahtarı üreten blokları içerdiğinden, yukarıdaki fail-closed politikası bu alanı **kapsamaz**. Azaltım: `nilkey doctor`, `RLIMIT_MEMLOCK` değerinin `mem_kib` için yeterli olup olmadığını raporlar; `init`/kasa açma sırasında bu ön kontrolün ne kadar katı olacağı (uyarı mı hata mı) Faz 2'de kararlaştırılır. Ayrıca 16 MiB'a kadar yük, tipik 8 MiB `RLIMIT_MEMLOCK` değerinde fail-closed modda açılamayabilir.
 
+### 7.4 Faz 1 Uygulama Kararları ve Bilinen Sınırlamalar
+
+**Uygulama kararları** (`include/nilkey/secure_buffer.hpp`, `hardening.hpp`):
+* Kilit politikası global değil, `SecureBuffer::Create(size, MemlockPolicy)` parametresidir; `--allow-unlocked-memory` bayrağını CLI (Faz 4) buraya bağlar.
+* Bir tampon üzerinde aynı anda yalnızca bir guard açık olabilir; ikinci `Open()` `kInvalidArgument` döner (referans sayımı yok).
+* Guard açıkken tamponu taşımak (move) `abort()` eder; guard taşınmış tampona işaret etmiş olurdu.
+* Guard, tamponu yeniden `PROT_NONE` yapamazsa `abort()` eder; devam etmek sırrı okunabilir bırakırdı.
+
+**Bilinen sınırlamalar:**
+* **Sanitizer altında kilit hatası simüle edilemez:** ASan/UBSan `mlock()` çağrısını yakalar ve her zaman başarı döndürür. Bu yüzden §10 madde 7'nin kilit politikası testi (`tests/test_memlock_policy.cpp`) yalnızca sanitizer kapalıyken kaydedilir ve CI'ın release profilinde koşar. Bu, "tüm testler sanitizer altında çalışır" kuralının bilinçli bir istisnasıdır.
+* **Root / `CAP_IPC_LOCK`:** Bu yetkiyle `RLIMIT_MEMLOCK` yok sayılır; kilit politikası testi `SKIP` yazıp yeşil geçer.
+* **Test edilmeyenler:** `mprotect` ihlali (SIGSEGV) ve canary bozulması (ASan altında sinyal davranışı kırılgan); `HardenProcess()` içindeki `prctl`/`setrlimit` hata yolları (başarısız kılınamaz).
+
+**Sonraki fazlara bırakılanlar:**
+* `sodium_stackzero` çağrıları KDF, şifre çözme ve parola okuma akışlarında (Faz 2 ve 4).
+* Argon2 iç çalışma belleği kilidi kararı Faz 2'dedir (yukarıdaki sınırlama).
+* `main()` içindeki sertleştirme hata dalı gerçek CLI ile birlikte Faz 4'te yeniden düzenlenir.
+
 ---
 
 ## 8. Atomik Dosya Kaydı ve İzin Politikası
