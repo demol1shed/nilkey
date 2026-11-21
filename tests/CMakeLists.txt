@@ -33,6 +33,11 @@ nilkey_add_test(test_hardening)
 nilkey_add_test(test_vault_format nilkey_core_test)
 nilkey_add_test(test_crypto nilkey_core_test)
 
+# Real Argon2id costs (64 MiB, 3 passes). Links nilkey_core, which has no
+# test-only macros. Skip with `ctest -LE slow`.
+nilkey_add_test(test_crypto_production_kdf)
+set_tests_properties(test_crypto_production_kdf PROPERTIES LABELS slow TIMEOUT 120)
+
 # Sanitizer runtimes intercept mlock() and always report success, so the
 # lock-failure policy can only be tested without them.
 if(NOT NILKEY_ENABLE_SANITIZERS)
