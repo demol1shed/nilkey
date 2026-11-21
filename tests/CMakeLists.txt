@@ -4,9 +4,15 @@ set(NILKEY_TEST_ENVIRONMENT
   "UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1")
 
 # A test executable built from <name>.cpp that must exit with status 0.
+# Tests that derive keys pass nilkey_core_test (fast KDF limits) as the
+# second argument.
 function(nilkey_add_test name)
+  set(lib nilkey_core)
+  if(ARGC GREATER 1)
+    set(lib ${ARGV1})
+  endif()
   add_executable(${name} ${name}.cpp)
-  target_link_libraries(${name} PRIVATE nilkey_core)
+  target_link_libraries(${name} PRIVATE ${lib})
   add_test(NAME ${name} COMMAND ${name})
   set_tests_properties(${name} PROPERTIES ENVIRONMENT "${NILKEY_TEST_ENVIRONMENT}")
 endfunction()
@@ -24,6 +30,7 @@ endfunction()
 nilkey_add_test(test_result)
 nilkey_add_test(test_secure_buffer)
 nilkey_add_test(test_hardening)
+nilkey_add_test(test_vault_format nilkey_core_test)
 
 # Sanitizer runtimes intercept mlock() and always report success, so the
 # lock-failure policy can only be tested without them.
