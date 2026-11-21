@@ -31,6 +31,7 @@ nilkey_add_test(test_result)
 nilkey_add_test(test_secure_buffer)
 nilkey_add_test(test_hardening)
 nilkey_add_test(test_vault_format nilkey_core_test)
+nilkey_add_test(test_crypto nilkey_core_test)
 
 # Sanitizer runtimes intercept mlock() and always report success, so the
 # lock-failure policy can only be tested without them.
