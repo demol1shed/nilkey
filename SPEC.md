@@ -188,7 +188,7 @@ Uygulama herhangi bir kasa veya parola verisini okumadan önce sırasıyla şunl
 * **Varsayılan Mod (Katı / Fail-Closed):** `sodium_mlock()` `-1` (`ENOMEM` / `EPERM`) döndürürse işlem derhal durdurulur, hassas tampon serbest bırakılır ve `stderr`'e `RLIMIT_MEMLOCK` limitinin yetersiz olduğunu açıklayan, kullanıcıyı `nilkey doctor` komutuna (ve `ulimit -l` kontrolüne) yönlendiren net bir hata basılır.
 * **Bilinçli Geçersiz Kılma (`--allow-unlocked-memory`):** Kullanıcı bu global bayrağı açıkça verirse, `stderr`'e belleğin swap dışına kilitlenemediğine dair görünür bir uyarı yazılarak çalışmaya devam edilir.
 
-**Bilinen Sınırlama (Argon2 Çalışma Belleği):** `libsodium` Argon2id çalışma belleğini (`mem_kib`, varsayılan 64 MiB) kendi içinde ayırır ve en-iyi-çaba `mlock` dener; başarısızlığı yutar. Bu bellek son anahtarı üreten blokları içerdiğinden, yukarıdaki fail-closed politikası bu alanı **kapsamaz**. Azaltım: `nilkey doctor`, `RLIMIT_MEMLOCK` değerinin `mem_kib` için yeterli olup olmadığını raporlar; `init`/kasa açma sırasında bu ön kontrolün ne kadar katı olacağı (uyarı mı hata mı) Faz 2'de kararlaştırılır. Ayrıca 16 MiB'a kadar yük, tipik 8 MiB `RLIMIT_MEMLOCK` değerinde fail-closed modda açılamayabilir.
+**Bilinen Sınırlama (Argon2 Çalışma Belleği):** `libsodium` Argon2id çalışma belleğini (`mem_kib`, varsayılan 64 MiB) kendi içinde ayırır ve en-iyi-çaba `mlock` dener; başarısızlığı yutar. Bu bellek son anahtarı üreten blokları içerdiğinden, yukarıdaki fail-closed politikası bu alanı **kapsamaz**. Azaltım: `nilkey doctor`, `RLIMIT_MEMLOCK` değerinin `mem_kib` için yeterli olup olmadığını raporlar; **Faz 2 kararı:** `NewVaultKey` ve `DeriveVaultKey`, `RLIMIT_MEMLOCK` değeri `mem_kib` baytından küçükse `stderr`'e uyarı yazar ve devam eder; hata dönmez ve `--allow-unlocked-memory` bayrağından bağımsızdır. Gerekçe: anahtarın kendisi zaten fail-closed `SecureBuffer` içindedir; bu ön kontrol fail-closed olsaydı varsayılan 64 MiB ile tipik 8 MiB limitli sistemlerde `nilkey` kullanılamaz olurdu. Ayrıca 16 MiB'a kadar yük, tipik 8 MiB `RLIMIT_MEMLOCK` değerinde fail-closed modda açılamayabilir.
 
 ### 7.4 Faz 1 Uygulama Kararları ve Bilinen Sınırlamalar
 
@@ -204,9 +204,13 @@ Uygulama herhangi bir kasa veya parola verisini okumadan önce sırasıyla şunl
 * **Test edilmeyenler:** `mprotect` ihlali (SIGSEGV) ve canary bozulması (ASan altında sinyal davranışı kırılgan); `HardenProcess()` içindeki `prctl`/`setrlimit` hata yolları (başarısız kılınamaz).
 
 **Sonraki fazlara bırakılanlar:**
-* `sodium_stackzero` çağrıları KDF, şifre çözme ve parola okuma akışlarında (Faz 2 ve 4).
-* Argon2 iç çalışma belleği kilidi kararı Faz 2'dedir (yukarıdaki sınırlama).
+* `sodium_stackzero` çağrısı parola okuma akışında (Faz 4). KDF ve şifre çözme akışlarında Faz 2'de eklendi (§7.5).
 * `main()` içindeki sertleştirme hata dalı gerçek CLI ile birlikte Faz 4'te yeniden düzenlenir.
+
+### 7.5 Faz 2 Uygulama Kararları
+
+* `sodium_stackzero(4096)`, anahtar türetme (`DeriveKey`) ve şifre çözme (`Open`) başarıyla tamamlandığında çağrılır; hata dönüş yollarında çağrılmaz.
+* `Seal` her çağrıda yeni rastgele nonce üretir; aynı (anahtar, nonce) çifti hiç yeniden kullanılmaz.
 
 ---
 
