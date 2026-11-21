@@ -64,6 +64,7 @@ set(NILKEY_CORE_SOURCES
   src/fd_io.cpp
   src/hardening.cpp
   src/secure_buffer.cpp
+  src/terminal.cpp
   src/tlv.cpp
   src/vault.cpp
   src/vault_format.cpp)
