@@ -38,6 +38,10 @@ nilkey_add_test(test_vault nilkey_core_test)
 nilkey_add_test(test_args)
 nilkey_add_test(test_cli)
 
+# Drives real pseudo-terminals; a hang must fail the test, not the CI job.
+nilkey_add_test(test_terminal)
+set_tests_properties(test_terminal PROPERTIES TIMEOUT 60)
+
 # Real Argon2id costs (64 MiB, 3 passes). Links nilkey_core, which has no
 # test-only macros. Skip with `ctest -LE slow`.
 nilkey_add_test(test_crypto_production_kdf)
