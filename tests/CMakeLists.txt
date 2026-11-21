@@ -35,6 +35,8 @@ nilkey_add_test(test_crypto nilkey_core_test)
 nilkey_add_test(test_atomic_file nilkey_core_test)
 nilkey_add_test(test_tlv)
 nilkey_add_test(test_vault nilkey_core_test)
+nilkey_add_test(test_args)
+nilkey_add_test(test_cli)
 
 # Real Argon2id costs (64 MiB, 3 passes). Links nilkey_core, which has no
 # test-only macros. Skip with `ctest -LE slow`.

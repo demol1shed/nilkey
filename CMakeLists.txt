@@ -57,7 +57,9 @@ target_link_options(nilkey_options INTERFACE
   $<$<CONFIG:Release>:-Wl,-z,relro,-z,now>)
 
 set(NILKEY_CORE_SOURCES
+  src/args.cpp
   src/atomic_file.cpp
+  src/cli.cpp
   src/crypto.cpp
   src/hardening.cpp
   src/secure_buffer.cpp
@@ -78,8 +80,11 @@ target_compile_definitions(nilkey_core_test PUBLIC
   NILKEY_ALLOW_TEST_KDF
   NILKEY_TEST_MAX_KDF_MEM_KIB=1024)
 
+# cli.cpp prints the version for --version.
+target_compile_definitions(nilkey_core PRIVATE NILKEY_VERSION="${PROJECT_VERSION}")
+target_compile_definitions(nilkey_core_test PRIVATE NILKEY_VERSION="${PROJECT_VERSION}")
+
 add_executable(nilkey src/main.cpp)
-target_compile_definitions(nilkey PRIVATE NILKEY_VERSION="${PROJECT_VERSION}")
 target_link_libraries(nilkey PRIVATE nilkey_core)
 
 enable_testing()

@@ -1,15 +1,19 @@
 #include <cstdio>
 #include <cstdlib>
+#include <span>
 
+#include "nilkey/cli.hpp"
 #include "nilkey/hardening.hpp"
 
-// Phase 1 stub: the real CLI arrives in Phase 4.
-int main() {
+int main(int argc, char** argv) {
+  // SPEC.md 7.1: harden before any vault or password data is touched.
   const nilkey::Status hardened = nilkey::HardenProcess();
   if (!hardened.ok()) {
     std::fprintf(stderr, "nilkey: %s\n", hardened.error().message);
-    return EXIT_FAILURE;
+    return nilkey::kExitError;
   }
-  std::fputs("nilkey " NILKEY_VERSION ": not implemented yet (phase 1 stub)\n", stderr);
-  return EXIT_FAILURE;
+  const std::span<const char* const> args =
+      argc > 1 ? std::span<const char* const>(argv + 1, static_cast<std::size_t>(argc - 1))
+               : std::span<const char* const>();
+  return nilkey::Run(args, stdout, stderr);
 }
