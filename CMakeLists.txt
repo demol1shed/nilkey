@@ -61,6 +61,7 @@ set(NILKEY_CORE_SOURCES
   src/atomic_file.cpp
   src/cli.cpp
   src/crypto.cpp
+  src/fd_io.cpp
   src/hardening.cpp
   src/secure_buffer.cpp
   src/tlv.cpp
