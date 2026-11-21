@@ -222,9 +222,11 @@ Kasa dosyası her zaman `0600` (yalnızca sahip okuma/yazma) izinleriyle tutulur
 5. Üst dizin (`O_RDONLY | O_DIRECTORY`) açılır, `fsync(dir_fd)` çağrılır ve kapatılır.
 6. `rename` öncesinde herhangi bir hata oluşursa geçici dosya `unlink` ile silinir ve mevcut kasa dosyasına hiç dokunulmaz.
 
-**Açık Maddeler (Faz 2'de karara bağlanacak):**
-* **Symlink:** Kasa yolu bir symlink ise `rename` symlink'i normal dosyayla değiştirir. Seçenekler: hedefi `realpath` ile çözüp onun dizininde yazmak veya symlink'i reddetmek.
-* **Eşzamanlı yazma:** İki `nilkey` süreci aynı kasayı değiştirirse son yazan kazanır. Kasa yanında bir kilit dosyası üzerinde `flock` düşünülmelidir.
+**Faz 2 Kararları:**
+* **Symlink:** Kasa yolu bir symlink ise yazma ve okuma `kSymlinkRejected` ile reddedilir (`lstat` ile yazmadan önce, `O_NOFOLLOW` ile okurken). Symlink izlenmez, `realpath` ile çözülmez.
+* **Eşzamanlı yazma (bilinen sınırlama):** `atomic_file` katmanı dosya kilidi kullanmaz; iki `nilkey` süreci aynı kasayı aynı anda okuyup değiştirirse son yazan kazanır. Kilit (`flock`), okuma-değiştir-yaz döngüsünü sahiplenen üst katmanda (Faz 3/4) ele alınır.
+* **Okuma:** `ReadVaultFile` yalnızca düzenli dosyaları kabul eder ve `66 + 16 MiB + 16 B` üstündeki dosyaları bellek ayırmadan reddeder; başlık/boyut tutarlılığı `OpenWithPassword` içinde doğrulanır.
+* **Dizin `fsync` hatası:** `rename` sonrası dizin `fsync` başarısız olursa `kIoError` döner, ancak yeni dosya yerindedir.
 
 ---
 
