@@ -14,6 +14,7 @@
 
 #include <cstddef>
 #include <span>
+#include <vector>
 
 #include "nilkey/result.hpp"
 
@@ -25,6 +26,13 @@ namespace nilkey {
 // and the existing vault is untouched. If only the final directory fsync
 // fails, kIoError is returned although the new file is already in place.
 [[nodiscard]] Status WriteFileAtomic(const char* path, std::span<const std::byte> data);
+
+// Reads a whole vault file. Fails with kSymlinkRejected for a symlink,
+// kIoError for open/read errors, and kInvalidFormat for anything that is not a
+// regular file, is larger than kHeaderSize + kMaxPayloadSize (checked before
+// any memory is allocated), or changes size while being read. Header and
+// size consistency are checked later by OpenWithPassword, not here.
+[[nodiscard]] Result<std::vector<std::byte>> ReadVaultFile(const char* path);
 
 }  // namespace nilkey
 

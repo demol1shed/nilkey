@@ -1,4 +1,5 @@
 #include "nilkey/atomic_file.hpp"
+#include "nilkey/vault_format.hpp"
 
 #include <fcntl.h>
 #include <sodium.h>
@@ -8,6 +9,7 @@
 #include <cerrno>
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace nilkey {
 
@@ -123,6 +125,54 @@ Status WriteFileAtomic(const char* path, std::span<const std::byte> data) {
 
   // From here on the new file is in place; see the header for the failure case.
   return SyncDirectory(DirectoryOf(path));
+}
+
+Result<std::vector<std::byte>> ReadVaultFile(const char* path) {
+  if (path == nullptr || path[0] == '\0') return make_error(ErrorCode::kInvalidArgument);
+
+  // O_NONBLOCK: opening a FIFO must not hang; it is then rejected by fstat.
+  const int fd = open(path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC);
+  if (fd < 0) {
+    return make_error(errno == ELOOP ? ErrorCode::kSymlinkRejected : ErrorCode::kIoError);
+  }
+
+  // Everything after open() goes through this lambda so close() runs once.
+  const auto read_all = [fd]() -> Result<std::vector<std::byte>> {
+    struct stat st;
+    if (fstat(fd, &st) != 0) return make_error(ErrorCode::kIoError);
+    if (!S_ISREG(st.st_mode)) return make_error(ErrorCode::kInvalidFormat);
+    // st_size is non-negative for a regular file.
+    const auto size = static_cast<std::uint64_t>(st.st_size);
+    if (size > kHeaderSize + kMaxPayloadSize) return make_error(ErrorCode::kInvalidFormat);
+
+    std::vector<std::byte> bytes(static_cast<std::size_t>(size));
+    std::size_t got = 0;
+    while (got < bytes.size()) {
+      const ssize_t n = read(fd, bytes.data() + got, bytes.size() - got);
+      if (n < 0) {
+        if (errno == EINTR) continue;
+        return make_error(ErrorCode::kIoError);
+      }
+      if (n == 0) return make_error(ErrorCode::kInvalidFormat);  // Shrank while reading.
+      got += static_cast<std::size_t>(n);
+    }
+
+    // The file must end here; a byte more means it grew while being read.
+    std::byte extra;
+    for (;;) {
+      const ssize_t n = read(fd, &extra, 1);
+      if (n < 0 && errno == EINTR) continue;
+      if (n < 0) return make_error(ErrorCode::kIoError);
+      if (n > 0) return make_error(ErrorCode::kInvalidFormat);
+      break;
+    }
+    return bytes;
+  };
+
+  Result<std::vector<std::byte>> result = read_all();
+  // A failed close() of a read-only descriptor loses no data, but is still reported.
+  if (close(fd) != 0 && result.ok()) return make_error(ErrorCode::kIoError);
+  return result;
 }
 
 }  // namespace nilkey
