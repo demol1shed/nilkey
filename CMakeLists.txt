@@ -57,6 +57,7 @@ target_link_options(nilkey_options INTERFACE
   $<$<CONFIG:Release>:-Wl,-z,relro,-z,now>)
 
 set(NILKEY_CORE_SOURCES
+  src/atomic_file.cpp
   src/crypto.cpp
   src/hardening.cpp
   src/secure_buffer.cpp
