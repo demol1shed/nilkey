@@ -21,6 +21,8 @@ enum class ErrorCode : std::uint8_t {
   kCryptoFailed,
   kIoError,
   kSymlinkRejected,
+  kNotFound,
+  kAlreadyExists,
 };
 
 // Carries a code and a static description. It never holds passwords, keys or
@@ -62,6 +64,10 @@ constexpr const char* describe(ErrorCode code) {
       return "file operation failed";
     case ErrorCode::kSymlinkRejected:
       return "vault path is a symbolic link";
+    case ErrorCode::kNotFound:
+      return "record not found";
+    case ErrorCode::kAlreadyExists:
+      return "a record with this name already exists";
   }
   return "unknown error";
 }
