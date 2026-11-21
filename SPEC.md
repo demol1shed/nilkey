@@ -162,7 +162,23 @@ Her kayıt ardışık TLV alanlarından oluşur:
 * Her okuma öncesinde tamsayı taşması (integer overflow) ve kalan tampon boyutu (`remaining >= length`) doğrulanır.
 * Tanınmayan `type` kodları, `length` değeri kayıt sınırları içindeyse güvenle atlanır (ileriye dönük uyumluluk).
 * Aynı kayıtta yinelenen alan kodu veya kasa genelinde yinelenen `name` tespit edilirse dosya tutarsız kabul edilip reddedilir.
-* Kayıt/alan sayısı ve alan uzunlukları için makul üst sınırlar uygulanır.
+* Kayıt/alan sayısı ve alan uzunlukları için makul üst sınırlar uygulanır (sayılar §6.4'te).
+
+### 6.4 Faz 3 Uygulama Kararları
+
+**Uygulama kararları** (`include/nilkey/tlv.hpp`, `vault.hpp`):
+* **Limitler:** en fazla 100.000 kayıt, kayıt başına en fazla 64 alan, `name` en fazla 1024 bayt. Toplam yük 16 MiB'ı aşamaz (4 baytlık `record_count` ve her kaydın 4 baytlık `record_len` öneki dahil).
+* **Yinelenen alan kodu** bilinmeyen tipler için de reddedilir. Kayıtlar artan tip sırasında yazılır; ayrıştırıcı sıra aramaz.
+* **İsteğe bağlı alanlar:** yok ile boş aynıdır; boş `username`/`url`/`notes` yazılmaz. `password` alanı zorunludur ama boş olabilir; boş parolanın engellenmesi CLI'ya (Faz 4) aittir.
+* **UTF-8:** `name`/`username`/`url`/`notes` hem yazarken hem ayrıştırırken katı RFC 3629 doğrulamasından geçer (overlong, surrogate ve U+10FFFF üstü reddedilir, NUL geçerlidir). `password` ham bayttır. `name` karşılaştırması bayt bayttır, Unicode normalizasyonu yoktur (NFC ve NFD ayrı adlardır).
+* **Bilinmeyen alanlar:** dokunulmayan kayıtlar bayt bayt kopyalanır; `Update` eski kaydın bilinmeyen alanlarını yeni kayda taşır, böylece daha yeni bir sürümün yazdığı veri kaybolmaz. Taşıma sonrası alan sayısı 64'ü aşacaksa `kOutOfRange` döner (yazılan kayıt geri okunamazdı).
+* **`Vault` modeli:** açık yük tek bir `SecureBuffer`'da, kayıt konumları gizli olmayan bir indekste tutulur. Her değişiklik yeni yükü tahsisten önce boyutlandırır, yazar, yeniden ayrıştırır ve ancak ondan sonra takas eder; hata yolunda kasa değişmez. Zaman damgası dışarıdan (`now`) verilir. `Update` tüm kullanıcı alanlarını değiştirir (yeniden adlandırma dahil), `created_at` korunur. Açık bir `VaultReader` varken değişiklik `kInvalidArgument` döner.
+
+**Bilinen sınırlamalar:**
+* **~2× kilitli bellek:** değişiklik sırasında eski ve yeni yük aynı anda bellektedir. Tipik 8 MiB `RLIMIT_MEMLOCK` değerinde yaklaşık 4 MiB üstü bir kasa açılabilir ama değiştirilemez; politika fail-closed kalır (§7.3).
+* **Doğrusal arama:** `Find` doğrusaldır ve her değişiklik O(n)'dir; 100.000 kayıtla bile pratiktir.
+* **Katı UTF-8 ve kilitlenme:** ayrıştırmadaki katı doğrulama, başka bir yazardan gelen tek bir bozuk alanın tüm kasayı açılmaz kılmasına yol açar.
+* **Saat ve kilit:** `Vault` saat okumaz ve dosya kilidi tutmaz (bkz. §8).
 
 ---
 
@@ -188,7 +204,7 @@ Uygulama herhangi bir kasa veya parola verisini okumadan önce sırasıyla şunl
 * **Varsayılan Mod (Katı / Fail-Closed):** `sodium_mlock()` `-1` (`ENOMEM` / `EPERM`) döndürürse işlem derhal durdurulur, hassas tampon serbest bırakılır ve `stderr`'e `RLIMIT_MEMLOCK` limitinin yetersiz olduğunu açıklayan, kullanıcıyı `nilkey doctor` komutuna (ve `ulimit -l` kontrolüne) yönlendiren net bir hata basılır.
 * **Bilinçli Geçersiz Kılma (`--allow-unlocked-memory`):** Kullanıcı bu global bayrağı açıkça verirse, `stderr`'e belleğin swap dışına kilitlenemediğine dair görünür bir uyarı yazılarak çalışmaya devam edilir.
 
-**Bilinen Sınırlama (Argon2 Çalışma Belleği):** `libsodium` Argon2id çalışma belleğini (`mem_kib`, varsayılan 64 MiB) kendi içinde ayırır ve en-iyi-çaba `mlock` dener; başarısızlığı yutar. Bu bellek son anahtarı üreten blokları içerdiğinden, yukarıdaki fail-closed politikası bu alanı **kapsamaz**. Azaltım: `nilkey doctor`, `RLIMIT_MEMLOCK` değerinin `mem_kib` için yeterli olup olmadığını raporlar; **Faz 2 kararı:** `NewVaultKey` ve `DeriveVaultKey`, `RLIMIT_MEMLOCK` değeri `mem_kib` baytından küçükse `stderr`'e uyarı yazar ve devam eder; hata dönmez ve `--allow-unlocked-memory` bayrağından bağımsızdır. Gerekçe: anahtarın kendisi zaten fail-closed `SecureBuffer` içindedir; bu ön kontrol fail-closed olsaydı varsayılan 64 MiB ile tipik 8 MiB limitli sistemlerde `nilkey` kullanılamaz olurdu. Ayrıca 16 MiB'a kadar yük, tipik 8 MiB `RLIMIT_MEMLOCK` değerinde fail-closed modda açılamayabilir.
+**Bilinen Sınırlama (Argon2 Çalışma Belleği):** `libsodium` Argon2id çalışma belleğini (`mem_kib`, varsayılan 64 MiB) kendi içinde ayırır ve en-iyi-çaba `mlock` dener; başarısızlığı yutar. Bu bellek son anahtarı üreten blokları içerdiğinden, yukarıdaki fail-closed politikası bu alanı **kapsamaz**. Azaltım: `nilkey doctor`, `RLIMIT_MEMLOCK` değerinin `mem_kib` için yeterli olup olmadığını raporlar; **Faz 2 kararı:** `NewVaultKey` ve `DeriveVaultKey`, `RLIMIT_MEMLOCK` değeri `mem_kib` baytından küçükse `stderr`'e uyarı yazar ve devam eder; hata dönmez ve `--allow-unlocked-memory` bayrağından bağımsızdır. Gerekçe: anahtarın kendisi zaten fail-closed `SecureBuffer` içindedir; bu ön kontrol fail-closed olsaydı varsayılan 64 MiB ile tipik 8 MiB limitli sistemlerde `nilkey` kullanılamaz olurdu. Ayrıca 16 MiB'a kadar yük, tipik 8 MiB `RLIMIT_MEMLOCK` değerinde fail-closed modda açılamayabilir. Değişiklikler (ekle/güncelle/sil) eski ve yeni yükü aynı anda tuttuğundan bu sınır yaklaşık yarıya iner (§6.4).
 
 ### 7.4 Faz 1 Uygulama Kararları ve Bilinen Sınırlamalar
 
@@ -228,7 +244,7 @@ Kasa dosyası her zaman `0600` (yalnızca sahip okuma/yazma) izinleriyle tutulur
 
 **Faz 2 Kararları:**
 * **Symlink:** Kasa yolu bir symlink ise yazma ve okuma `kSymlinkRejected` ile reddedilir (`lstat` ile yazmadan önce, `O_NOFOLLOW` ile okurken). Symlink izlenmez, `realpath` ile çözülmez.
-* **Eşzamanlı yazma (bilinen sınırlama):** `atomic_file` katmanı dosya kilidi kullanmaz; iki `nilkey` süreci aynı kasayı aynı anda okuyup değiştirirse son yazan kazanır. Kilit (`flock`), okuma-değiştir-yaz döngüsünü sahiplenen üst katmanda (Faz 3/4) ele alınır.
+* **Eşzamanlı yazma (bilinen sınırlama):** `atomic_file` katmanı dosya kilidi kullanmaz; iki `nilkey` süreci aynı kasayı aynı anda okuyup değiştirirse son yazan kazanır. Kilit (`flock`), okuma-değiştir-yaz döngüsünü sahiplenen üst katmanda (Faz 4, CLI) ele alınır.
 * **Okuma:** `ReadVaultFile` yalnızca düzenli dosyaları kabul eder ve `66 + 16 MiB + 16 B` üstündeki dosyaları bellek ayırmadan reddeder; başlık/boyut tutarlılığı `OpenWithPassword` içinde doğrulanır.
 * **Dizin `fsync` hatası:** `rename` sonrası dizin `fsync` başarısız olursa `kIoError` döner, ancak yeni dosya yerindedir.
 
