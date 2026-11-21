@@ -56,11 +56,23 @@ target_compile_options(nilkey_options INTERFACE
 target_link_options(nilkey_options INTERFACE
   $<$<CONFIG:Release>:-Wl,-z,relro,-z,now>)
 
-add_library(nilkey_core STATIC
+set(NILKEY_CORE_SOURCES
   src/hardening.cpp
-  src/secure_buffer.cpp)
+  src/secure_buffer.cpp
+  src/vault_format.cpp)
+
+add_library(nilkey_core STATIC ${NILKEY_CORE_SOURCES})
 target_include_directories(nilkey_core PUBLIC ${PROJECT_SOURCE_DIR}/include)
 target_link_libraries(nilkey_core PUBLIC nilkey_options PkgConfig::SODIUM)
+
+# The same sources with the test-only KDF limits (SPEC.md 4.1 and 10). Only
+# tests link this target; the nilkey binary never gets these macros.
+add_library(nilkey_core_test STATIC ${NILKEY_CORE_SOURCES})
+target_include_directories(nilkey_core_test PUBLIC ${PROJECT_SOURCE_DIR}/include)
+target_link_libraries(nilkey_core_test PUBLIC nilkey_options PkgConfig::SODIUM)
+target_compile_definitions(nilkey_core_test PUBLIC
+  NILKEY_ALLOW_TEST_KDF
+  NILKEY_TEST_MAX_KDF_MEM_KIB=1024)
 
 add_executable(nilkey src/main.cpp)
 target_compile_definitions(nilkey PRIVATE NILKEY_VERSION="${PROJECT_VERSION}")
