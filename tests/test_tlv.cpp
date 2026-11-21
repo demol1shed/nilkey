@@ -529,6 +529,21 @@ NILKEY_TEST(writer_put_u32_is_little_endian_and_bounded) {
   NILKEY_EXPECT(writer.written() == 4);
 }
 
+NILKEY_TEST(writer_put_raw_appends_verbatim_and_is_bounded) {
+  Bytes guarded(8, std::byte{0xAA});
+  TlvWriter writer(std::span<std::byte>(guarded).first(5));
+  NILKEY_EXPECT(writer.PutRaw(S(Raw({1, 2, 3}))).ok());
+  NILKEY_EXPECT(writer.PutRaw({}).ok());  // nothing to append is fine
+  NILKEY_EXPECT(writer.written() == 3);
+
+  auto too_big = writer.PutRaw(S(Raw({4, 5, 6})));  // 2 bytes left
+  NILKEY_EXPECT(!too_big.ok() && too_big.error().code == ErrorCode::kOutOfRange);
+  NILKEY_EXPECT(writer.written() == 3);
+
+  NILKEY_EXPECT(writer.PutRaw(S(Raw({4, 5}))).ok());
+  NILKEY_EXPECT(guarded == Raw({1, 2, 3, 4, 5, 0xAA, 0xAA, 0xAA}));  // nothing past 5
+}
+
 NILKEY_TEST(writer_builds_an_envelope_that_parses) {
   const Bytes name_a = Str("a");
   const Bytes name_b = Str("b");
