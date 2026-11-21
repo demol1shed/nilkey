@@ -107,8 +107,8 @@ Her fazın kodlaması ve test koşusu bittikten sonra kullanıcıya kısa bir **
 
 ## 6. Faz Takibi
 
-* **Mevcut Faz:** Faz 2 (Kriptografik Çekirdek ve Dosya Katmanı)
-* **Tamamlanan Fazlar:** Faz 0 (Proje İskeleti ve Derleme Kapısı), PR #2; Faz 1 (Güvenli Bellek ve Süreç Sertleştirme), PR #5 ve #6.
+* **Mevcut Faz:** Faz 3 (İkili TLV Serileştirme ve Kasa Veri Modeli)
+* **Tamamlanan Fazlar:** Faz 0 (Proje İskeleti ve Derleme Kapısı), PR #2; Faz 1 (Güvenli Bellek ve Süreç Sertleştirme), PR #5 ve #6; Faz 2 (Kriptografik Çekirdek ve Dosya Katmanı), PR #10, #11, #12 ve #13.
 
 ---
 
