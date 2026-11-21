@@ -61,6 +61,7 @@ set(NILKEY_CORE_SOURCES
   src/crypto.cpp
   src/hardening.cpp
   src/secure_buffer.cpp
+  src/tlv.cpp
   src/vault_format.cpp)
 
 add_library(nilkey_core STATIC ${NILKEY_CORE_SOURCES})
