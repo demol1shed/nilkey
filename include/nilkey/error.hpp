@@ -23,6 +23,7 @@ enum class ErrorCode : std::uint8_t {
   kSymlinkRejected,
   kNotFound,
   kAlreadyExists,
+  kUsage,
 };
 
 // Carries a code and a static description. It never holds passwords, keys or
@@ -68,6 +69,8 @@ constexpr const char* describe(ErrorCode code) {
       return "record not found";
     case ErrorCode::kAlreadyExists:
       return "a record with this name already exists";
+    case ErrorCode::kUsage:
+      return "invalid command line";
   }
   return "unknown error";
 }
