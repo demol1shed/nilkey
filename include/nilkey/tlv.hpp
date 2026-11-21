@@ -89,6 +89,8 @@ class TlvWriter {
   [[nodiscard]] Status PutU32(std::uint32_t value);
   [[nodiscard]] Status PutField(std::uint8_t type, std::span<const std::byte> value);
   [[nodiscard]] Status PutInt64Field(std::uint8_t type, std::int64_t value);
+  // Appends bytes verbatim, e.g. a record that is copied unchanged.
+  [[nodiscard]] Status PutRaw(std::span<const std::byte> bytes);
 
   std::size_t written() const { return pos_; }
 
