@@ -4,8 +4,8 @@ A zero-knowledge command-line password vault written in C++20 on top of
 [libsodium](https://libsodium.org). Secrets live in a single encrypted `.vault`
 file; the master password (or any hash of it) is never stored.
 
-> **Status: pre-alpha (Phase 0 of 4 — project skeleton).**
-> There is no usable functionality yet, and the design has not been
+> **Status: pre-alpha (phases 0-2 of 4 done — secure memory, crypto core and vault file layer).**
+> There is no usable functionality yet (no CLI), and the design has not been
 > independently audited. Do not store real secrets with it.
 
 ## Design goals
