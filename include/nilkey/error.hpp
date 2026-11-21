@@ -24,6 +24,11 @@ enum class ErrorCode : std::uint8_t {
   kNotFound,
   kAlreadyExists,
   kUsage,
+  kNoTerminal,
+  kInputTooLong,
+  kEmptyInput,
+  kInputMismatch,
+  kAborted,
 };
 
 // Carries a code and a static description. It never holds passwords, keys or
@@ -71,6 +76,16 @@ constexpr const char* describe(ErrorCode code) {
       return "a record with this name already exists";
     case ErrorCode::kUsage:
       return "invalid command line";
+    case ErrorCode::kNoTerminal:
+      return "no terminal available; nilkey reads passwords from /dev/tty";
+    case ErrorCode::kInputTooLong:
+      return "input is too long";
+    case ErrorCode::kEmptyInput:
+      return "input is empty";
+    case ErrorCode::kInputMismatch:
+      return "the two entries do not match";
+    case ErrorCode::kAborted:
+      return "aborted";
   }
   return "unknown error";
 }
