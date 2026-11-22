@@ -93,5 +93,12 @@ target_compile_definitions(nilkey_core_test PRIVATE NILKEY_VERSION="${PROJECT_VE
 add_executable(nilkey src/main.cpp)
 target_link_libraries(nilkey PRIVATE nilkey_core)
 
+# The end-to-end tests drive this build of the CLI. It links the test library, so
+# a new vault gets the cheapest Argon2id costs and the tests run in
+# milliseconds. It is only built for the tests and never installed; the real
+# nilkey binary above never gets the test macros.
+add_executable(nilkey_e2e src/main.cpp)
+target_link_libraries(nilkey_e2e PRIVATE nilkey_core_test)
+
 enable_testing()
 add_subdirectory(tests)
