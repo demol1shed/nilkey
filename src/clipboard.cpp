@@ -148,10 +148,9 @@ std::int64_t NowMs() {
   return static_cast<std::int64_t>(now.tv_sec) * 1000 + now.tv_nsec / 1000000;
 }
 
-// Waits for the tool to exit with status 0. One that is still running after
-// kToolTimeoutMs is killed.
-Status WaitForTool(pid_t pid) {
-  const std::int64_t deadline = NowMs() + kToolTimeoutMs;
+// Waits for the tool to exit with status 0. One that is still running at
+// `deadline` (a NowMs() time) is killed.
+Status WaitForTool(pid_t pid, std::int64_t deadline) {
   for (;;) {
     int status = 0;
     const pid_t done = waitpid(pid, &status, WNOHANG);
@@ -197,11 +196,46 @@ class SigpipeIgnored {
   bool active_ = false;
 };
 
+// Writes all of `data` to the pipe `fd`, giving up at `deadline` (a NowMs()
+// time). A plain blocking write would wait for ever on a tool that never reads
+// its input once the text no longer fits in the pipe's buffer. Only this end of
+// the pipe is made non-blocking; the other end belongs to the tool.
+Status WriteWithin(int fd, std::span<const std::byte> data, std::int64_t deadline) {
+  const int flags = fcntl(fd, F_GETFL);
+  if (flags < 0 || fcntl(fd, F_SETFL, flags | O_NONBLOCK) != 0) {
+    return make_error(ErrorCode::kClipboardFailed);
+  }
+  std::size_t done = 0;
+  while (done < data.size()) {
+    const ssize_t n = write(fd, data.data() + done, data.size() - done);
+    if (n > 0) {
+      done += static_cast<std::size_t>(n);
+      continue;
+    }
+    if (n < 0 && errno == EINTR) continue;
+    if (n < 0 && errno == EAGAIN) {
+      const std::int64_t left = deadline - NowMs();
+      if (left <= 0) return make_error(ErrorCode::kClipboardFailed);
+      // Whatever poll() reports, write again: a reader that is gone shows up as
+      // POLLERR, not POLLOUT, and write() then fails with EPIPE at once.
+      struct pollfd waiting = {fd, POLLOUT, 0};
+      if (poll(&waiting, 1, static_cast<int>(left)) < 0 && errno != EINTR) {
+        return make_error(ErrorCode::kClipboardFailed);
+      }
+      continue;
+    }
+    return make_error(ErrorCode::kClipboardFailed);  // EPIPE, or no progress.
+  }
+  return Ok();
+}
+
 // Runs a tool that reads `input` from stdin.
 Status RunWithInput(const std::string& path, const std::vector<std::string>& args,
                     std::span<const std::byte> input) {
   const SigpipeIgnored guard;
   if (!guard.ok()) return make_error(ErrorCode::kClipboardFailed);
+  // Writing and waiting share one time limit.
+  const std::int64_t deadline = NowMs() + kToolTimeoutMs;
   const Result<Pipe> pipe = MakePipe();
   if (!pipe.ok()) return pipe.error();
 
@@ -212,9 +246,11 @@ Status RunWithInput(const std::string& path, const std::vector<std::string>& arg
     return pid.error();
   }
 
-  const Status written = WriteAll(pipe.value().write_end, input);
+  const Status written = WriteWithin(pipe.value().write_end, input, deadline);
   const bool closed = close(pipe.value().write_end) == 0;
-  const Status exited = WaitForTool(pid.value());  // Also reaps it if writing failed.
+  // Also reaps the tool if writing failed (and kills it if it is still there
+  // once the time is up).
+  const Status exited = WaitForTool(pid.value(), deadline);
   if (!written.ok() || !closed || !exited.ok()) return make_error(ErrorCode::kClipboardFailed);
   return Ok();
 }
@@ -233,7 +269,7 @@ Result<SecureBuffer> ReadClipboard(const ClipboardTool& tool, std::size_t max_si
 
   Result<SecureBuffer> text = ReadAllSecret(pipe.value().read_end, max_size, policy);
   CloseQuietly(pipe.value().read_end);
-  const Status exited = WaitForTool(pid.value());
+  const Status exited = WaitForTool(pid.value(), NowMs() + kToolTimeoutMs);
   if (!text.ok()) return make_error(ErrorCode::kClipboardFailed);
   if (!exited.ok()) return exited.error();
   return text;
