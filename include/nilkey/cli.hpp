@@ -17,6 +17,7 @@ namespace nilkey {
 inline constexpr int kExitOk = 0;
 inline constexpr int kExitError = 1;  // The command ran and failed.
 inline constexpr int kExitUsage = 2;  // The command line was wrong.
+inline constexpr int kExitAborted = 130;  // The user aborted (Ctrl-C, Ctrl-D); 128 + SIGINT.
 
 // Which vault file to use (SPEC.md 9.1): `--vault`, else $NILKEY_PATH, else
 // $HOME/.local/share/nilkey/default.vault. `env_nilkey_path` and `env_home`
