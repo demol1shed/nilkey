@@ -45,6 +45,13 @@ nilkey_add_test(test_cli)
 nilkey_add_test(test_cli_generate)
 set_tests_properties(test_cli_generate PROPERTIES TIMEOUT 60)
 
+# init, add and list against the real command line. The test reads vaults back
+# through the library, so it links the test library like the CLI it starts.
+nilkey_add_test(test_cli_e2e nilkey_core_test)
+add_dependencies(test_cli_e2e nilkey_e2e)
+target_compile_definitions(test_cli_e2e PRIVATE NILKEY_E2E_BINARY="$<TARGET_FILE:nilkey_e2e>")
+set_tests_properties(test_cli_e2e PROPERTIES TIMEOUT 180)
+
 # Drives real pseudo-terminals; a hang must fail the test, not the CI job.
 nilkey_add_test(test_terminal)
 set_tests_properties(test_terminal PROPERTIES TIMEOUT 60)
