@@ -97,6 +97,30 @@ bool StatOf(pid_t pid, char& state, long& session) {
                      &session) == 4;
 }
 
+// The sanitizer runtimes intercept mlock() and report success without locking
+// anything (SPEC.md 7.4), so VmLck can only be checked in the other build.
+#if defined(__SANITIZE_ADDRESS__)
+#define NILKEY_TEST_UNDER_SANITIZER 1
+#elif defined(__has_feature)
+#if __has_feature(address_sanitizer)
+#define NILKEY_TEST_UNDER_SANITIZER 1
+#endif
+#endif
+
+#ifndef NILKEY_TEST_UNDER_SANITIZER
+// The memory this process has locked, in KiB (VmLck in /proc/<pid>/status); -1
+// if it cannot be read.
+long LockedKiB(pid_t pid) {
+  Bytes raw;
+  if (!nilkey::test::Slurp("/proc/" + std::to_string(pid) + "/status", raw)) return -1;
+  const std::string text = TextOf(raw);
+  const std::size_t at = text.find("VmLck:");
+  long kib = -1;
+  if (at == std::string::npos || std::sscanf(text.c_str() + at + 6, "%ld", &kib) != 1) return -1;
+  return kib;
+}
+#endif
+
 bool IsGone(pid_t pid) {
   char state = 0;
   long session = 0;
@@ -290,6 +314,10 @@ NILKEY_TEST(the_largest_timeout_is_accepted_and_the_cleaner_is_a_session_of_its_
   long session = 0;
   NILKEY_EXPECT(StatOf(cleaner, state, session));
   NILKEY_EXPECT(session == cleaner);  // setsid(): no terminal, no shared process group.
+#ifndef NILKEY_TEST_UNDER_SANITIZER
+  // It keeps the digest of the copied text for the whole wait, out of swap.
+  NILKEY_EXPECT(LockedKiB(cleaner) > 0);
+#endif
   NILKEY_EXPECT(kill(cleaner, SIGTERM) == 0);
   bool gone = false;
   for (int i = 0; i < 100 && !gone; ++i) {
