@@ -1,16 +1,11 @@
 #include "nilkey/cli.hpp"
 
-#include <unistd.h>
-
 #include <array>
-#include <charconv>
 #include <cstddef>
-#include <system_error>
+#include <string_view>
 
 #include "nilkey/args.hpp"
-#include "nilkey/fd_io.hpp"
-#include "nilkey/passgen.hpp"
-#include "nilkey/secure_buffer.hpp"
+#include "nilkey/commands.hpp"
 
 namespace nilkey {
 
@@ -67,6 +62,16 @@ constexpr std::array<CommandSpec, 9> kCommands = {{
     {"doctor", "doctor", "Check the security of this environment", {}, 0, 0},
 }};
 
+// Which function runs each command. The names match kCommands.
+struct Handler {
+  std::string_view name;
+  CommandHandler run;
+};
+
+constexpr std::array<Handler, 1> kHandlers = {{
+    {"generate", RunGenerate},
+}};
+
 void PrintUsage(std::FILE* out) {
   std::fputs(
       "nilkey - zero-knowledge command line password vault\n"
@@ -91,72 +96,6 @@ void PrintUsage(std::FILE* out) {
       "\n"
       "Passwords are read from the terminal, never from the command line.\n",
       out);
-}
-
-// Prints `error` and returns the exit status for it: 2 for a wrong command
-// line (with a pointer to --help), 1 for anything else. Only the static
-// message is printed, never a value that came from the user.
-int ReportError(const Error& error, std::FILE* err) {
-  std::fprintf(err, "nilkey: %s\n", error.message);
-  if (error.code == ErrorCode::kUsage) {
-    std::fputs("Try 'nilkey --help'.\n", err);
-    return kExitUsage;
-  }
-  return kExitError;
-}
-
-// Writes the password to `fd` and, if `fd` is a terminal, a line break after
-// it. Into a pipe or file the bytes go out exactly as they are, so that
-// `nilkey generate | xclip` does not put a newline on the clipboard.
-Status WriteSecretLine(int fd, const SecureBuffer& secret) {
-  const Result<ScopedReadGuard> guard = ScopedReadGuard::Open(secret);
-  if (!guard.ok()) return guard.error();
-  if (const Status s = WriteAll(fd, guard.value().bytes()); !s.ok()) return s;
-  if (isatty(fd) == 1) {
-    const std::byte newline{'\n'};
-    return WriteAll(fd, std::span<const std::byte>(&newline, 1));
-  }
-  return Ok();
-}
-
-MemlockPolicy PolicyFor(const GlobalOptions& globals) {
-  return globals.allow_unlocked_memory ? MemlockPolicy::kAllowUnlocked : MemlockPolicy::kRequire;
-}
-
-Result<PasswordSpec> ParseGenerateSpec(const ParsedArgs& request) {
-  PasswordSpec spec;
-  if (const std::optional<std::string_view> text = request.Value("length"); text.has_value()) {
-    const char* const first = text->data();
-    const char* const last = first + text->size();
-    std::size_t length = 0;
-    const std::from_chars_result parsed = std::from_chars(first, last, length);
-    if (parsed.ec != std::errc() || parsed.ptr != last || length < kMinPasswordLength ||
-        length > kMaxPasswordLength) {
-      return Error{ErrorCode::kUsage, "--length must be a number from 8 to 1024"};
-    }
-    spec.length = length;
-  }
-  spec.lower = !request.Has("no-lower");
-  spec.upper = !request.Has("no-upper");
-  spec.digits = !request.Has("no-digits");
-  spec.symbols = !request.Has("no-symbols");
-  if (!spec.lower && !spec.upper && !spec.digits && !spec.symbols) {
-    return Error{ErrorCode::kUsage, "at least one character class must stay enabled"};
-  }
-  return spec;
-}
-
-int RunGenerate(const ParsedArgs& request, const Io& io) {
-  const Result<PasswordSpec> spec = ParseGenerateSpec(request);
-  if (!spec.ok()) return ReportError(spec.error(), io.err);
-
-  const Result<SecureBuffer> password =
-      GeneratePassword(spec.value(), PolicyFor(request.globals));
-  if (!password.ok()) return ReportError(password.error(), io.err);
-
-  const Status written = WriteSecretLine(io.out_fd, password.value());
-  if (!written.ok()) return ReportError(written.error(), io.err);
-  return kExitOk;
 }
 
 }  // namespace
@@ -191,7 +130,9 @@ int Run(std::span<const char* const> args, const Io& io) {
     return kExitOk;
   }
 
-  if (request.command->name == "generate") return RunGenerate(request, io);
+  for (const Handler& handler : kHandlers) {
+    if (handler.name == request.command->name) return handler.run(request, io);
+  }
 
   // The other commands arrive in the next steps of Phase 4.
   std::fprintf(io.err, "nilkey: '%.*s' is not implemented yet\n",
