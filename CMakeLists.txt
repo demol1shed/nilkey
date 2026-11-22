@@ -65,6 +65,7 @@ set(NILKEY_CORE_SOURCES
   src/hardening.cpp
   src/passgen.cpp
   src/secure_buffer.cpp
+  src/store.cpp
   src/terminal.cpp
   src/tlv.cpp
   src/vault.cpp
