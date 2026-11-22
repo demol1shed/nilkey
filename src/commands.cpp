@@ -805,14 +805,22 @@ void CheckSwap(DoctorReport& report) {
     report.Line(Finding::kNote, "swap", "cannot read /proc/swaps");
     return;
   }
-  char text[8192];
-  const std::size_t n = std::fread(text, 1, sizeof text, file);
+  // Read to the end: one fread() may stop short, and a machine can list many
+  // areas. The cap only keeps a broken file from growing without limit.
+  constexpr std::size_t kMaxSwapsText = 1024 * 1024;
+  std::string text;
+  char chunk[4096];
+  while (text.size() < kMaxSwapsText) {
+    const std::size_t n = std::fread(chunk, 1, sizeof chunk, file);
+    text.append(chunk, n);
+    if (n < sizeof chunk) break;  // End of the file, or an error (checked below).
+  }
   const bool read_failed = std::ferror(file) != 0;
   if (std::fclose(file) != 0 || read_failed) {
     report.Line(Finding::kNote, "swap", "cannot read /proc/swaps");
     return;
   }
-  const unsigned areas = CountSwapAreas(std::string_view(text, n));
+  const unsigned areas = CountSwapAreas(text);
   if (areas == 0) {
     report.Line(Finding::kOk, "swap", "no swap area is active");
     return;
