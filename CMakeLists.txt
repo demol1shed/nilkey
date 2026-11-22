@@ -60,6 +60,7 @@ set(NILKEY_CORE_SOURCES
   src/args.cpp
   src/atomic_file.cpp
   src/cli.cpp
+  src/clipboard.cpp
   src/commands.cpp
   src/crypto.cpp
   src/display.cpp
