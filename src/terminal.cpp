@@ -217,19 +217,6 @@ Result<Line> PromptAndReadLine(const char* prompt, bool echo, std::span<std::byt
   return line;
 }
 
-// Copies `source` into a SecureBuffer of exactly its size.
-Result<SecureBuffer> CopyToSecureBuffer(std::span<const std::byte> source, MemlockPolicy policy) {
-  Result<SecureBuffer> made = SecureBuffer::Create(source.size(), policy);
-  if (!made.ok()) return made;
-  {
-    // The guard must be closed before the buffer is moved out.
-    Result<ScopedWriteGuard> guard = ScopedWriteGuard::Open(made.value());
-    if (!guard.ok()) return guard.error();
-    std::memcpy(guard.value().bytes().data(), source.data(), source.size());
-  }
-  return made;
-}
-
 Result<SecureBuffer> ReadSecretUncleaned(const char* prompt, MemlockPolicy policy) {
   Result<SecureBuffer> line_buffer = SecureBuffer::Create(kMaxSecretSize + 1, policy);
   if (!line_buffer.ok()) return line_buffer;

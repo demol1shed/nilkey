@@ -6,6 +6,7 @@
 #include "nilkey/secure_buffer.hpp"
 #include "test_framework.hpp"
 
+using nilkey::CopyToSecureBuffer;
 using nilkey::ErrorCode;
 using nilkey::MemlockPolicy;
 using nilkey::ScopedReadGuard;
@@ -99,6 +100,21 @@ NILKEY_TEST(move_assignment_releases_old_and_takes_new) {
   a = std::move(b);
   NILKEY_EXPECT(a.size() == 32);
   NILKEY_EXPECT(b.size() == 0);  // NOLINT: moved-from state is specified.
+}
+
+NILKEY_TEST(copy_has_exactly_the_size_and_content_of_the_source) {
+  auto r = CopyToSecureBuffer(kSecret, MemlockPolicy::kRequire);
+  NILKEY_EXPECT(r.ok());
+  NILKEY_EXPECT(r.value().size() == kSecret.size());
+  auto g = ScopedReadGuard::Open(r.value());
+  NILKEY_EXPECT(g.ok());
+  NILKEY_EXPECT_SECRET_EQ(g.value().bytes(), std::span<const std::byte>(kSecret));
+}
+
+NILKEY_TEST(copy_of_an_empty_source_is_an_empty_buffer) {
+  auto r = CopyToSecureBuffer({}, MemlockPolicy::kRequire);
+  NILKEY_EXPECT(r.ok());
+  NILKEY_EXPECT(r.value().size() == 0);
 }
 
 NILKEY_TEST_MAIN()

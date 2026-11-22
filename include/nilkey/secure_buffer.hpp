@@ -87,6 +87,12 @@ class [[nodiscard]] ScopedWriteGuard {
   SecureBuffer* buffer_;
 };
 
+// A SecureBuffer of exactly `source.size()` bytes holding a copy of `source`.
+// For sizing a secret that was first read into a larger buffer. An empty source
+// yields an empty buffer.
+[[nodiscard]] Result<SecureBuffer> CopyToSecureBuffer(std::span<const std::byte> source,
+                                                      MemlockPolicy policy);
+
 }  // namespace nilkey
 
 #endif  // NILKEY_SECURE_BUFFER_HPP
