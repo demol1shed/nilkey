@@ -217,18 +217,33 @@ Status Vault::Add(const RecordInput& input, std::int64_t now) {
 
 Status Vault::Update(std::span<const std::byte> name, const RecordInput& input,
                      std::int64_t now) {
+  return Patch(name,
+               RecordPatch{input.name, input.username, input.password, input.url, input.notes},
+               now);
+}
+
+Status Vault::Patch(std::span<const std::byte> name, const RecordPatch& patch,
+                    std::int64_t now) {
   Result<BuiltPayload> built = [&]() -> Result<BuiltPayload> {
     Result<VaultReader> reader = Open();
     if (!reader.ok()) return reader.error();
     const std::optional<std::size_t> target = reader.value().Find(name);
     if (!target.has_value()) return make_error(ErrorCode::kNotFound);
-    // Renaming onto another record's name is refused; keeping the name is fine.
-    const std::optional<std::size_t> owner = reader.value().Find(input.name);
-    if (owner.has_value() && *owner != *target) return make_error(ErrorCode::kAlreadyExists);
 
     Result<Record> old = reader.value().Get(*target);
     if (!old.ok()) return old.error();
-    const Record record = ToRecord(input, old.value().created_at, now);
+    // The old spans point into the payload that BuildPayload reads from.
+    const Record record{patch.name.value_or(old.value().name),
+                        patch.username.value_or(old.value().username),
+                        patch.password.value_or(old.value().password),
+                        patch.url.value_or(old.value().url),
+                        patch.notes.value_or(old.value().notes),
+                        old.value().created_at,
+                        now};
+
+    // Renaming onto another record's name is refused; keeping the name is fine.
+    const std::optional<std::size_t> owner = reader.value().Find(record.name);
+    if (owner.has_value() && *owner != *target) return make_error(ErrorCode::kAlreadyExists);
 
     std::vector<Entry> entries;
     entries.reserve(index_.size());

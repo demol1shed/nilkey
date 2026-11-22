@@ -33,6 +33,17 @@ struct RecordInput {
   std::span<const std::byte> notes;
 };
 
+// A change to some fields of one record: a field that is set replaces the old
+// value (an empty span clears an optional field), a field that is not set keeps
+// it. The old values never leave the vault's own buffer.
+struct RecordPatch {
+  std::optional<std::span<const std::byte>> name;
+  std::optional<std::span<const std::byte>> username;
+  std::optional<std::span<const std::byte>> password;
+  std::optional<std::span<const std::byte>> url;
+  std::optional<std::span<const std::byte>> notes;
+};
+
 // Read access to a vault. Spans returned by Get() and payload() are valid only
 // while the reader is alive. Only one reader (or any other guard) can be open
 // on a vault at a time, so Add/Update/Remove fail with kInvalidArgument while
@@ -91,6 +102,12 @@ class Vault {
   // different record.
   [[nodiscard]] Status Update(std::span<const std::byte> name, const RecordInput& input,
                               std::int64_t now);
+
+  // Like Update(), but only the fields set in `patch` change; the others keep
+  // their old value without being copied out of the vault. The errors are the
+  // same as for Update().
+  [[nodiscard]] Status Patch(std::span<const std::byte> name, const RecordPatch& patch,
+                             std::int64_t now);
 
   // kNotFound if there is no record called `name`.
   [[nodiscard]] Status Remove(std::span<const std::byte> name);
