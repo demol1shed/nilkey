@@ -25,6 +25,9 @@ int ReportError(const Error& error, std::FILE* err);
 // kAllowUnlocked if --allow-unlocked-memory was given, kRequire otherwise.
 MemlockPolicy PolicyFor(const GlobalOptions& globals);
 
+int RunInit(const ParsedArgs& request, const Io& io);
+int RunAdd(const ParsedArgs& request, const Io& io);
+int RunList(const ParsedArgs& request, const Io& io);
 int RunGenerate(const ParsedArgs& request, const Io& io);
 
 }  // namespace nilkey
