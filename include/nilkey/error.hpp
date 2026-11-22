@@ -32,6 +32,9 @@ enum class ErrorCode : std::uint8_t {
   kVaultNotFound,
   kVaultExists,
   kNotConfirmed,
+  kNoClipboardTool,
+  kClipboardFailed,
+  kFieldEmpty,
 };
 
 // Carries a code and a static description. It never holds passwords, keys or
@@ -95,6 +98,12 @@ constexpr const char* describe(ErrorCode code) {
       return "vault file already exists";
     case ErrorCode::kNotConfirmed:
       return "not deleted";
+    case ErrorCode::kNoClipboardTool:
+      return "no clipboard tool found; install wl-clipboard, xclip or xsel, or use --print";
+    case ErrorCode::kClipboardFailed:
+      return "the clipboard tool failed";
+    case ErrorCode::kFieldEmpty:
+      return "the field is empty";
   }
   return "unknown error";
 }
