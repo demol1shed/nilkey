@@ -26,9 +26,23 @@ inline constexpr int kExitUsage = 2;  // The command line was wrong.
                                                    const char* env_nilkey_path,
                                                    const char* env_home);
 
-// Runs one invocation; `args` excludes argv[0]. Normal output goes to `out`,
-// diagnostics to `err`. Returns the process exit status.
-int Run(std::span<const char* const> args, std::FILE* out, std::FILE* err);
+// Where a run writes. Secrets (a generated or stored password) must never pass
+// through a stdio buffer, which would leave an unlocked, unzeroed copy in
+// memory, so they are written straight to `out_fd`.
+//
+// In production `out` and `out_fd` are the same stream (stdout and fd 1); in
+// tests they are a memory stream and a pipe. A command that writes to both
+// must fflush(out) before its first raw write to `out_fd`, or the order is
+// lost; no test can catch that.
+struct Io {
+  std::FILE* out;  // Help, version and other output that is not secret.
+  std::FILE* err;  // Diagnostics.
+  int out_fd;      // The descriptor behind `out`, for secrets.
+};
+
+// Runs one invocation; `args` excludes argv[0]. Returns the process exit
+// status.
+int Run(std::span<const char* const> args, const Io& io);
 
 }  // namespace nilkey
 
