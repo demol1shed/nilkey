@@ -12,6 +12,7 @@
 #include <string_view>
 #include <vector>
 
+#include "fake_clipboard.hpp"
 #include "nilkey/clipboard.hpp"
 #include "temp_dir.hpp"
 #include "test_framework.hpp"
@@ -58,7 +59,7 @@ bool Has(const std::vector<std::string>& args, std::string_view wanted) {
   return false;
 }
 
-// The text of a fake clipboard, as the tests build it. Not a secret.
+// The text of the fake clipboard, as the tests build it. Not a secret.
 using Bytes = std::vector<std::byte>;
 
 Bytes ToBytes(std::string_view text) {
@@ -67,10 +68,7 @@ Bytes ToBytes(std::string_view text) {
 }
 
 bool WriteText(const std::string& path, std::string_view text) {
-  const int fd = open(path.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
-  if (fd < 0) return false;
-  const bool wrote = write(fd, text.data(), text.size()) == static_cast<ssize_t>(text.size());
-  return close(fd) == 0 && wrote;
+  return nilkey::test::WriteTextFile(path, text);
 }
 
 std::string ReadText(const std::string& path) {
@@ -79,29 +77,13 @@ std::string ReadText(const std::string& path) {
   return std::string(reinterpret_cast<const char*>(bytes.data()), bytes.size());
 }
 
-// A stand-in for xclip. "-in" stores stdin in $FAKE_CLIP, "-out" prints it; the
-// arguments of every call are appended to $FAKE_LOG. $FAKE_FAIL makes it fail,
-// $FAKE_NOREAD makes it quit without reading, $FAKE_HANG makes it hang.
-constexpr const char* kFakeXclip =
-    "#!/bin/sh\n"
-    "echo \"$*\" >> \"$FAKE_LOG\"\n"
-    "[ -n \"$FAKE_FAIL\" ] && exit 3\n"
-    "[ -n \"$FAKE_NOREAD\" ] && exit 0\n"
-    "[ -n \"$FAKE_HANG\" ] && exec sleep 60\n"
-    "case \"$*\" in\n"
-    "  *-in*) cat > \"$FAKE_CLIP\" ;;\n"
-    "  *-out*) cat \"$FAKE_CLIP\" ;;\n"
-    "esac\n";
-
 // A directory with the fake xclip, the clipboard file and the log, and the
 // environment variables the script reads. The tool found is the one a real
 // session on X11 would get.
 class FakeDesktop {
  public:
   FakeDesktop() {
-    ok_ = dir_.ok() && WriteText(dir_.Path("xclip"), kFakeXclip) &&
-          chmod(dir_.Path("xclip").c_str(), 0755) == 0 && WriteText(Clip(), "") &&
-          WriteText(Log(), "") && setenv("FAKE_CLIP", Clip().c_str(), 1) == 0 &&
+    ok_ = nilkey::test::InstallFakeXclip(dir_) && setenv("FAKE_CLIP", Clip().c_str(), 1) == 0 &&
           setenv("FAKE_LOG", Log().c_str(), 1) == 0;
     for (const char* name : {"FAKE_FAIL", "FAKE_NOREAD", "FAKE_HANG"}) {
       if (unsetenv(name) != 0) ok_ = false;
