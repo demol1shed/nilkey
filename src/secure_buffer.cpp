@@ -22,10 +22,16 @@ Result<SecureBuffer> SecureBuffer::Create(std::size_t size, MemlockPolicy policy
       sodium_free(data);
       return make_error(ErrorCode::kMemoryLockFailed);
     }
-    std::fputs(
-        "warning: secure memory could not be locked; it may be written to swap "
-        "(see `ulimit -l`)\n",
-        stderr);
+    // One run allocates many buffers; saying it once is enough. (There are no
+    // threads in nilkey, so a plain flag will do.)
+    static bool warned = false;
+    if (!warned) {
+      warned = true;
+      std::fputs(
+          "warning: secure memory could not be locked; it may be written to swap "
+          "(see `ulimit -l`)\n",
+          stderr);
+    }
   }
 
   sodium_memzero(data, size);  // sodium_malloc fills new memory with 0xdb.
