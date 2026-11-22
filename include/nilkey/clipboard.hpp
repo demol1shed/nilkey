@@ -75,6 +75,26 @@ struct ClipboardFingerprint {
                                       const ClipboardFingerprint& fingerprint, unsigned seconds,
                                       MemlockPolicy policy);
 
+// Starts the cleaner as a detached process that runs RunCleaner() and exits;
+// returns as soon as that process is up, without waiting for it. The process
+// gets a session of its own, so closing the terminal does not reach it, and
+// no standard streams or other descriptors.
+//
+// Contract for the caller: no SecureBuffer that holds a secret may be alive
+// when this is called, because fork() copies the whole address space (the vault,
+// the key, the master password and the copied text must already be destroyed).
+// The call itself zeroes the unused part of the stack first, since fork() copies
+// that too, including frames of calls that hashed or wrote the secret. What the
+// cleaner receives is only plain data: the tool, the fingerprint, the time.
+// Nothing may fork while a VaultLock is held (the child would keep the lock).
+//
+// kIoError if the process cannot be created; kClipboardFailed if it did not
+// report that it was running (it is then killed, and the caller must clear the
+// clipboard itself).
+[[nodiscard]] Status StartCleaner(const ClipboardTool& tool,
+                                  const ClipboardFingerprint& fingerprint, unsigned seconds,
+                                  MemlockPolicy policy);
+
 }  // namespace nilkey
 
 #endif  // NILKEY_CLIPBOARD_HPP
