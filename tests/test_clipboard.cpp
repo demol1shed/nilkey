@@ -282,8 +282,16 @@ NILKEY_TEST(a_tool_that_does_not_read_fails_the_copy_but_not_the_process) {
 
   struct sigaction before = {};
   NILKEY_EXPECT(sigaction(SIGPIPE, nullptr, &before) == 0);
+  const auto start = std::chrono::steady_clock::now();
   const auto result = nilkey::CopyToClipboard(desktop.tool(), ToBytes(std::string(1 << 20, 'z')));
+  const auto millis = std::chrono::duration_cast<std::chrono::milliseconds>(
+                          std::chrono::steady_clock::now() - start)
+                          .count();
   NILKEY_EXPECT(!result.ok() && result.error().code == ErrorCode::kClipboardFailed);
+  // The failure comes from the broken pipe at once, not from the time limit: a
+  // write that waited only for the pipe to become writable would keep waiting
+  // until the five seconds were up.
+  NILKEY_EXPECT(millis < 2000);
 
   struct sigaction after = {};
   NILKEY_EXPECT(sigaction(SIGPIPE, nullptr, &after) == 0);
@@ -302,6 +310,37 @@ NILKEY_TEST(a_tool_that_hangs_is_killed_after_a_few_seconds) {
                            .count();
   NILKEY_EXPECT(!result.ok() && result.error().code == ErrorCode::kClipboardFailed);
   NILKEY_EXPECT(seconds >= 4 && seconds < 30);
+}
+
+// The pipe to the tool holds 64 KiB; with more than that, a write that blocks
+// would wait for ever on a tool that never reads.
+NILKEY_TEST(a_tool_that_never_reads_a_large_text_is_killed_at_the_time_limit) {
+  const FakeDesktop desktop;
+  NILKEY_EXPECT(desktop.ok());
+  NILKEY_EXPECT(setenv("FAKE_HANG", "1", 1) == 0);
+
+  const auto start = std::chrono::steady_clock::now();
+  const auto result = nilkey::CopyToClipboard(desktop.tool(), ToBytes(std::string(1 << 20, 'z')));
+  const auto seconds = std::chrono::duration_cast<std::chrono::seconds>(
+                           std::chrono::steady_clock::now() - start)
+                           .count();
+  NILKEY_EXPECT(!result.ok() && result.error().code == ErrorCode::kClipboardFailed);
+  // The tool sleeps for 60 seconds; a blocking write would last as long.
+  NILKEY_EXPECT(seconds >= 4 && seconds < 30);
+}
+
+// Far more than the pipe holds: the write has to wait for the tool to read, in
+// several rounds, and still hand over every byte.
+NILKEY_TEST(a_text_larger_than_the_pipe_arrives_whole) {
+  const FakeDesktop desktop;
+  NILKEY_EXPECT(desktop.ok());
+
+  std::string text(1 << 20, '\0');
+  for (std::size_t i = 0; i < text.size(); ++i) {
+    text[i] = static_cast<char>('a' + (i * 7 + i / 251) % 26);
+  }
+  NILKEY_EXPECT(nilkey::CopyToClipboard(desktop.tool(), ToBytes(text)).ok());
+  NILKEY_EXPECT(ReadText(desktop.Clip()) == text);
 }
 
 // ---- The cleaner ----
