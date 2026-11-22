@@ -63,6 +63,7 @@ set(NILKEY_CORE_SOURCES
   src/crypto.cpp
   src/fd_io.cpp
   src/hardening.cpp
+  src/passgen.cpp
   src/secure_buffer.cpp
   src/terminal.cpp
   src/tlv.cpp
