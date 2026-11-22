@@ -62,6 +62,12 @@ static_assert(crypto_generichash_BYTES == 32, "ClipboardFingerprint holds a 32 b
 constexpr int kToolTimeoutMs = 5000;
 constexpr unsigned kReadBackTimeoutSeconds = 30;
 
+// The cleaner's promise is "cleared N seconds after the copy", and a laptop that
+// is closed in between must not stretch that: CLOCK_BOOTTIME keeps counting
+// while the machine is suspended, CLOCK_MONOTONIC does not. The reading and the
+// sleep have to use the same clock, or the absolute time is meaningless.
+constexpr clockid_t kCleanerClock = CLOCK_BOOTTIME;
+
 std::span<const std::byte> AsBytes(const std::string& text) {
   return {reinterpret_cast<const std::byte*>(text.data()), text.size()};
 }
@@ -348,11 +354,11 @@ Result<bool> RunCleaner(const ClipboardTool& tool, const ClipboardFingerprint& f
                         unsigned seconds, MemlockPolicy policy) {
   if (seconds > 0) {
     struct timespec until;
-    if (clock_gettime(CLOCK_MONOTONIC, &until) != 0) return make_error(ErrorCode::kInternal);
+    if (clock_gettime(kCleanerClock, &until) != 0) return make_error(ErrorCode::kInternal);
     until.tv_sec += static_cast<time_t>(seconds);
     // EINTR: sleep on until the same absolute time.
     int rc = 0;
-    while ((rc = clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &until, nullptr)) == EINTR) {
+    while ((rc = clock_nanosleep(kCleanerClock, TIMER_ABSTIME, &until, nullptr)) == EINTR) {
     }
     if (rc != 0) return make_error(ErrorCode::kInternal);
   }
