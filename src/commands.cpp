@@ -84,13 +84,20 @@ Result<std::int64_t> Now() {
   return static_cast<std::int64_t>(now);
 }
 
+bool IsValidName(std::string_view name) {
+  return !name.empty() && name.size() <= kMaxNameSize && IsValidUtf8(AsBytes(name));
+}
+
 // A bad name or option text is a mistake in the command line, so it is a usage
 // error; left to the vault it would surface as "invalid vault file format".
-Status ValidateRecordArguments(const ParsedArgs& request) {
-  const std::string_view name = request.positionals[0];
-  if (name.empty() || name.size() > kMaxNameSize || !IsValidUtf8(AsBytes(name))) {
+Status ValidateName(const ParsedArgs& request) {
+  if (!IsValidName(request.positionals[0])) {
     return Error{ErrorCode::kUsage, "the name must be 1 to 1024 bytes of valid UTF-8"};
   }
+  return Ok();
+}
+
+Status ValidateTextOptions(const ParsedArgs& request) {
   if (const auto text = request.Value("username"); text && !IsValidUtf8(AsBytes(*text))) {
     return Error{ErrorCode::kUsage, "--username must be valid UTF-8"};
   }
@@ -98,6 +105,11 @@ Status ValidateRecordArguments(const ParsedArgs& request) {
     return Error{ErrorCode::kUsage, "--url must be valid UTF-8"};
   }
   return Ok();
+}
+
+Status ValidateRecordArguments(const ParsedArgs& request) {
+  if (const Status s = ValidateName(request); !s.ok()) return s;
+  return ValidateTextOptions(request);
 }
 
 // Notes from stdin, into a SecureBuffer (never a std::string).
@@ -281,6 +293,172 @@ int RunAdd(const ParsedArgs& request, const Io& io) {
     return ReportError(s.error(), io.err);
   }
   std::fputs("\".\n", io.err);
+  return kExitOk;
+}
+
+// Opens a read guard on `buffer`, if there is one.
+Status OpenIfPresent(const std::optional<SecureBuffer>& buffer,
+                     std::optional<ScopedReadGuard>& guard) {
+  if (!buffer.has_value()) return Ok();
+  Result<ScopedReadGuard> opened = ScopedReadGuard::Open(*buffer);
+  if (!opened.ok()) return opened.error();
+  guard.emplace(std::move(opened).value());
+  return Ok();
+}
+
+Status WriteQuotedName(std::FILE* err, const char* before, std::string_view name,
+                       const char* after) {
+  std::fputs(before, err);
+  if (const Status s = WritePrintable(err, AsBytes(name)); !s.ok()) return s;
+  std::fputs(after, err);
+  return Ok();
+}
+
+int RunUpdate(const ParsedArgs& request, const Io& io) {
+  const MemlockPolicy policy = PolicyFor(request.globals);
+  const Result<std::string> path = VaultPathFor(request);
+  if (!path.ok()) return ReportError(path.error(), io.err);
+
+  // Everything that can be checked without a password comes first.
+  if (request.Has("prompt-password") && request.Has("generate")) {
+    return ReportError(Error{ErrorCode::kUsage, "use either --prompt-password or --generate"},
+                       io.err);
+  }
+  const bool new_password = request.Has("prompt-password") || request.Has("generate");
+  if (!new_password && !request.Has("rename") && !request.Has("username") &&
+      !request.Has("url") && !request.Has("notes-stdin")) {
+    return ReportError(Error{ErrorCode::kUsage, "nothing to change; give at least one option"},
+                       io.err);
+  }
+  if (const Status s = ValidateRecordArguments(request); !s.ok()) {
+    return ReportError(s.error(), io.err);
+  }
+  const std::optional<std::string_view> rename = request.Value("rename");
+  if (rename.has_value() && !IsValidName(*rename)) {
+    return ReportError(
+        Error{ErrorCode::kUsage, "--rename must be 1 to 1024 bytes of valid UTF-8"}, io.err);
+  }
+  if (const Status s = RequireVaultExists(path.value()); !s.ok()) {
+    return ReportError(s.error(), io.err);
+  }
+
+  std::optional<SecureBuffer> notes;
+  if (request.Has("notes-stdin")) {
+    Result<SecureBuffer> read = ReadNotes(policy);
+    if (!read.ok()) return ReportError(read.error(), io.err);
+    notes.emplace(std::move(read).value());
+  }
+
+  // Then every prompt, so the lock is not held while the user types.
+  Result<SecureBuffer> typed_master = ReadSecret("Master password: ", policy);
+  if (!typed_master.ok()) return ReportError(typed_master.error(), io.err);
+  std::optional<SecureBuffer> master(std::move(typed_master).value());
+  std::optional<SecureBuffer> password;
+  if (new_password) {
+    Result<SecureBuffer> chosen = RecordPassword(request, policy);
+    if (!chosen.ok()) return ReportError(chosen.error(), io.err);
+    password.emplace(std::move(chosen).value());
+  }
+  const Result<std::int64_t> now = Now();
+  if (!now.ok()) return ReportError(now.error(), io.err);
+
+  const Status saved =
+      ChangeVault(path.value(), master, policy, [&](LoadedVault& loaded) -> Status {
+        std::optional<ScopedReadGuard> password_bytes;
+        std::optional<ScopedReadGuard> notes_bytes;
+        if (const Status s = OpenIfPresent(password, password_bytes); !s.ok()) return s;
+        if (const Status s = OpenIfPresent(notes, notes_bytes); !s.ok()) return s;
+
+        // Only what was asked for is set; the vault keeps the rest as it is.
+        RecordPatch patch;
+        if (rename.has_value()) patch.name = AsBytes(*rename);
+        if (const auto text = request.Value("username")) patch.username = AsBytes(*text);
+        if (const auto text = request.Value("url")) patch.url = AsBytes(*text);
+        if (password_bytes.has_value()) patch.password = password_bytes->bytes();
+        if (notes_bytes.has_value()) patch.notes = notes_bytes->bytes();
+        return loaded.vault.Patch(AsBytes(request.positionals[0]), patch, now.value());
+      });
+  if (!saved.ok()) return ReportError(saved.error(), io.err);
+
+  if (const Status s = WriteQuotedName(io.err, "Updated \"", request.positionals[0], "\".\n");
+      !s.ok()) {
+    return ReportError(s.error(), io.err);
+  }
+  return kExitOk;
+}
+
+int RunDelete(const ParsedArgs& request, const Io& io) {
+  const MemlockPolicy policy = PolicyFor(request.globals);
+  const Result<std::string> path = VaultPathFor(request);
+  if (!path.ok()) return ReportError(path.error(), io.err);
+
+  if (const Status s = ValidateName(request); !s.ok()) return ReportError(s.error(), io.err);
+  if (const Status s = RequireVaultExists(path.value()); !s.ok()) {
+    return ReportError(s.error(), io.err);
+  }
+
+  // Asked before the master password, so nobody types it and then backs out.
+  // The name is not part of the question: it came from the command line, and
+  // text from there must not reach the terminal unchecked.
+  if (!request.Has("yes")) {
+    const Result<bool> confirmed = Confirm("Delete this record? [y/N] ");
+    if (!confirmed.ok()) return ReportError(confirmed.error(), io.err);
+    if (!confirmed.value()) return ReportError(make_error(ErrorCode::kNotConfirmed), io.err);
+  }
+
+  Result<SecureBuffer> typed_master = ReadSecret("Master password: ", policy);
+  if (!typed_master.ok()) return ReportError(typed_master.error(), io.err);
+  std::optional<SecureBuffer> master(std::move(typed_master).value());
+
+  const Status saved =
+      ChangeVault(path.value(), master, policy, [&](LoadedVault& loaded) -> Status {
+        return loaded.vault.Remove(AsBytes(request.positionals[0]));
+      });
+  if (!saved.ok()) return ReportError(saved.error(), io.err);
+
+  if (const Status s = WriteQuotedName(io.err, "Deleted \"", request.positionals[0], "\".\n");
+      !s.ok()) {
+    return ReportError(s.error(), io.err);
+  }
+  return kExitOk;
+}
+
+int RunPasswd(const ParsedArgs& request, const Io& io) {
+  const MemlockPolicy policy = PolicyFor(request.globals);
+  const Result<std::string> path = VaultPathFor(request);
+  if (!path.ok()) return ReportError(path.error(), io.err);
+  if (const Status s = RequireVaultExists(path.value()); !s.ok()) {
+    return ReportError(s.error(), io.err);
+  }
+
+  // Every prompt first, so the lock is not held while the user types.
+  Result<SecureBuffer> typed_master = ReadSecret("Current master password: ", policy);
+  if (!typed_master.ok()) return ReportError(typed_master.error(), io.err);
+  std::optional<SecureBuffer> master(std::move(typed_master).value());
+  Result<SecureBuffer> typed_next =
+      ReadNewSecret("New master password: ", "Repeat the new master password: ", policy);
+  if (!typed_next.ok()) return ReportError(typed_next.error(), io.err);
+  std::optional<SecureBuffer> next(std::move(typed_next).value());
+
+  // The new key is derived only once the current password has opened the vault,
+  // so a wrong password costs one key derivation, not two. The lock is held
+  // meanwhile; this command is rare.
+  const Status saved =
+      ChangeVault(path.value(), master, policy, [&](LoadedVault& loaded) -> Status {
+        Result<VaultKey> key = [&]() -> Result<VaultKey> {
+          const Result<ScopedReadGuard> guard = ScopedReadGuard::Open(*next);
+          if (!guard.ok()) return guard.error();
+          return NewVaultKey(guard.value().bytes(), ParamsForNewVault(), policy);
+        }();
+        next.reset();  // Not needed any more.
+        if (!key.ok()) return key.error();
+        // A fresh salt came with the key; Seal() adds a fresh nonce when saving.
+        loaded.key = std::move(key).value();
+        return Ok();
+      });
+  if (!saved.ok()) return ReportError(saved.error(), io.err);
+
+  std::fputs("Master password changed.\n", io.err);
   return kExitOk;
 }
 
