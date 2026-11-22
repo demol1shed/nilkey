@@ -28,6 +28,7 @@ MemlockPolicy PolicyFor(const GlobalOptions& globals);
 int RunInit(const ParsedArgs& request, const Io& io);
 int RunAdd(const ParsedArgs& request, const Io& io);
 int RunList(const ParsedArgs& request, const Io& io);
+int RunGet(const ParsedArgs& request, const Io& io);
 int RunUpdate(const ParsedArgs& request, const Io& io);
 int RunDelete(const ParsedArgs& request, const Io& io);
 int RunPasswd(const ParsedArgs& request, const Io& io);
