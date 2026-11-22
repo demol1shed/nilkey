@@ -8,7 +8,9 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <initializer_list>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -27,6 +29,7 @@ using nilkey::NextField;
 using nilkey::OpenWithPassword;
 using nilkey::ParseEnvelope;
 using nilkey::RecordInput;
+using nilkey::RecordPatch;
 using nilkey::ScopedWriteGuard;
 using nilkey::SecureBuffer;
 using nilkey::Seal;
@@ -398,6 +401,145 @@ NILKEY_TEST(update_that_would_exceed_the_field_limit_is_rejected) {
   // Without the optional fields it is exactly 64 and works.
   NILKEY_EXPECT(vault.Update(Str("a"), F("a", "pw2").View(), 5).ok());
   NILKEY_EXPECT(HasField(RecordAt(Payload(vault), 0), 0x10, {}));
+}
+
+// ---- Patch ----
+
+namespace {
+
+// A patch that sets one field, given by its TLV type.
+RecordPatch Only(unsigned type, const Bytes& value) {
+  RecordPatch patch;
+  const std::span<const std::byte> view(value);
+  if (type == 0x01) patch.name = view;
+  if (type == 0x02) patch.username = view;
+  if (type == 0x03) patch.password = view;
+  if (type == 0x04) patch.url = view;
+  if (type == 0x05) patch.notes = view;
+  return patch;
+}
+
+Vault FullRecordVault() {
+  Vault vault = Vault::CreateEmpty(kRequire).value();
+  Fields a = F("a", "pa");
+  a.username = Str("alice");
+  a.url = Str("https://a.example");
+  a.notes = Str("note a");
+  // Setup: a failure here is a broken test, not a result.
+  if (!vault.Add(a.View(), 100).ok() || !vault.Add(F("b", "pb").View(), 100).ok()) std::abort();
+  return vault;
+}
+
+}  // namespace
+
+NILKEY_TEST(patch_changes_only_the_fields_that_are_set) {
+  Vault vault = FullRecordVault();
+  const Bytes before = Payload(vault);
+
+  const Bytes password = Str("new password");
+  NILKEY_EXPECT(vault.Patch(Str("a"), Only(0x03, password), 200).ok());
+
+  {
+    auto reader = vault.Open().value();
+    auto rec = reader.Get(0);
+    NILKEY_EXPECT(rec.ok());
+    NILKEY_EXPECT(Is(rec.value().name, "a"));
+    NILKEY_EXPECT(Is(rec.value().username, "alice"));
+    NILKEY_EXPECT(Is(rec.value().url, "https://a.example"));
+    NILKEY_EXPECT(Is(rec.value().notes, "note a"));
+    NILKEY_EXPECT_SECRET_EQ(rec.value().password, S(password));
+    NILKEY_EXPECT(rec.value().created_at == 100);
+    NILKEY_EXPECT(rec.value().updated_at == 200);
+  }
+  // The other record is copied unchanged.
+  NILKEY_EXPECT(RecordAt(Payload(vault), 1) == RecordAt(before, 1));
+}
+
+NILKEY_TEST(patch_keeps_each_untouched_field_whichever_one_is_set) {
+  for (const unsigned type : {0x02U, 0x03U, 0x04U, 0x05U}) {
+    Vault vault = FullRecordVault();
+    const Bytes value = Str("changed");
+    NILKEY_EXPECT(vault.Patch(Str("a"), Only(type, value), 200).ok());
+
+    auto reader = vault.Open().value();
+    auto rec = reader.Get(0);
+    NILKEY_EXPECT(rec.ok());
+    NILKEY_EXPECT(Is(rec.value().username, type == 0x02 ? "changed" : "alice"));
+    NILKEY_EXPECT(Is(rec.value().password, type == 0x03 ? "changed" : "pa"));
+    NILKEY_EXPECT(Is(rec.value().url, type == 0x04 ? "changed" : "https://a.example"));
+    NILKEY_EXPECT(Is(rec.value().notes, type == 0x05 ? "changed" : "note a"));
+  }
+}
+
+NILKEY_TEST(patch_with_an_empty_value_clears_an_optional_field) {
+  Vault vault = FullRecordVault();
+  NILKEY_EXPECT(vault.Patch(Str("a"), Only(0x02, {}), 200).ok());
+  NILKEY_EXPECT(vault.Patch(Str("a"), Only(0x05, {}), 201).ok());
+
+  auto reader = vault.Open().value();
+  auto rec = reader.Get(0);
+  NILKEY_EXPECT(rec.ok());
+  NILKEY_EXPECT(rec.value().username.empty());
+  NILKEY_EXPECT(rec.value().notes.empty());
+  NILKEY_EXPECT(Is(rec.value().url, "https://a.example"));
+  NILKEY_EXPECT(Is(rec.value().password, "pa"));
+}
+
+NILKEY_TEST(a_patch_that_sets_nothing_only_moves_updated_at) {
+  Vault vault = FullRecordVault();
+  NILKEY_EXPECT(vault.Patch(Str("a"), RecordPatch{}, 300).ok());
+
+  auto reader = vault.Open().value();
+  auto rec = reader.Get(0);
+  NILKEY_EXPECT(rec.ok());
+  NILKEY_EXPECT(Is(rec.value().username, "alice"));
+  NILKEY_EXPECT(Is(rec.value().password, "pa"));
+  NILKEY_EXPECT(rec.value().created_at == 100);
+  NILKEY_EXPECT(rec.value().updated_at == 300);
+}
+
+NILKEY_TEST(patch_can_rename_keeping_the_other_fields_but_not_onto_another_record) {
+  Vault vault = FullRecordVault();
+
+  NILKEY_EXPECT(vault.Patch(Str("a"), Only(0x01, Str("a2")), 200).ok());
+  {
+    auto reader = vault.Open().value();
+    NILKEY_EXPECT(!reader.Find(Str("a")).has_value());
+    NILKEY_EXPECT(reader.Find(Str("a2")) == std::optional<std::size_t>(0));
+    NILKEY_EXPECT(Is(reader.Get(0).value().username, "alice"));
+  }
+  // Naming it what it already is does not collide with itself.
+  NILKEY_EXPECT(vault.Patch(Str("a2"), Only(0x01, Str("a2")), 201).ok());
+
+  const Bytes before = Payload(vault);
+  NILKEY_EXPECT(Fails(vault.Patch(Str("a2"), Only(0x01, Str("b")), 202),
+                      ErrorCode::kAlreadyExists));
+  NILKEY_EXPECT(Fails(vault.Patch(Str("a2"), Only(0x01, {}), 202), ErrorCode::kInvalidArgument));
+  NILKEY_EXPECT(Payload(vault) == before);
+}
+
+NILKEY_TEST(patch_reports_a_missing_record_and_respects_an_open_reader) {
+  Vault vault = FullRecordVault();
+  const Bytes before = Payload(vault);
+  NILKEY_EXPECT(Fails(vault.Patch(Str("nope"), Only(0x03, Str("x")), 2), ErrorCode::kNotFound));
+  {
+    auto reader = vault.Open();
+    NILKEY_EXPECT(reader.ok());
+    NILKEY_EXPECT(Fails(vault.Patch(Str("a"), Only(0x03, Str("x")), 2),
+                        ErrorCode::kInvalidArgument));
+  }
+  NILKEY_EXPECT(Payload(vault) == before);
+}
+
+NILKEY_TEST(patch_keeps_fields_of_unknown_type) {
+  Bytes rec_a = Rec("a", "pa", 1, 2);
+  Cat(rec_a, Fld(0x7F, Str("future")));
+  Vault vault = FromBytes(Env({rec_a}));
+
+  NILKEY_EXPECT(vault.Patch(Str("a"), Only(0x03, Str("new")), 10).ok());
+  const Bytes payload = Payload(vault);
+  NILKEY_EXPECT(HasField(RecordAt(payload, 0), 0x7F, Str("future")));
+  NILKEY_EXPECT(HasField(RecordAt(payload, 0), 0x03, Str("new")));
 }
 
 // ---- Remove ----
