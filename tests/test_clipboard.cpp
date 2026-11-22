@@ -128,6 +128,16 @@ class FakeDesktop {
   bool ok_ = false;
 };
 
+// Polls until the fake clipboard file is empty, for at most `limit_ms`.
+bool BecomesEmpty(const std::string& path, int limit_ms) {
+  const auto end = std::chrono::steady_clock::now() + std::chrono::milliseconds(limit_ms);
+  while (std::chrono::steady_clock::now() < end) {
+    if (ReadText(path).empty()) return true;
+    usleep(50 * 1000);
+  }
+  return ReadText(path).empty();
+}
+
 }  // namespace
 
 NILKEY_TEST(wayland_uses_wl_copy_and_wl_paste) {
@@ -384,6 +394,41 @@ NILKEY_TEST(the_cleaner_waits_for_the_given_time) {
   const auto elapsed = std::chrono::steady_clock::now() - start;
   NILKEY_EXPECT(cleared.ok() && cleared.value());
   NILKEY_EXPECT(elapsed >= std::chrono::milliseconds(1900));
+}
+
+// ---- The detached cleaner ----
+
+// What matters is the order: StartCleaner() comes back while the text is still
+// on the clipboard, and the clearing happens afterwards, in another process.
+NILKEY_TEST(the_detached_cleaner_clears_after_the_call_has_returned) {
+  const FakeDesktop desktop;
+  NILKEY_EXPECT(desktop.ok());
+  const Bytes text = ToBytes("s3cret value");
+  NILKEY_EXPECT(nilkey::CopyToClipboard(desktop.tool(), text).ok());
+  const auto fingerprint = nilkey::FingerprintOf(text);
+  NILKEY_EXPECT(fingerprint.ok());
+
+  NILKEY_EXPECT(nilkey::StartCleaner(desktop.tool(), fingerprint.value(), 3,
+                                     MemlockPolicy::kRequire)
+                    .ok());
+  NILKEY_EXPECT(ReadText(desktop.Clip()) == "s3cret value");  // Not cleared yet.
+  NILKEY_EXPECT(BecomesEmpty(desktop.Clip(), 20000));
+}
+
+NILKEY_TEST(the_detached_cleaner_leaves_changed_content_alone) {
+  const FakeDesktop desktop;
+  NILKEY_EXPECT(desktop.ok());
+  const Bytes text = ToBytes("s3cret value");
+  NILKEY_EXPECT(nilkey::CopyToClipboard(desktop.tool(), text).ok());
+  const auto fingerprint = nilkey::FingerprintOf(text);
+  NILKEY_EXPECT(fingerprint.ok());
+
+  NILKEY_EXPECT(nilkey::StartCleaner(desktop.tool(), fingerprint.value(), 1,
+                                     MemlockPolicy::kRequire)
+                    .ok());
+  NILKEY_EXPECT(WriteText(desktop.Clip(), "something else"));
+  usleep(3500 * 1000);  // Well past the time the cleaner was given.
+  NILKEY_EXPECT(ReadText(desktop.Clip()) == "something else");
 }
 
 NILKEY_TEST_MAIN()
