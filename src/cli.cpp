@@ -68,11 +68,14 @@ struct Handler {
   CommandHandler run;
 };
 
-constexpr std::array<Handler, 4> kHandlers = {{
+constexpr std::array<Handler, 7> kHandlers = {{
     {"init", RunInit},
     {"add", RunAdd},
     {"list", RunList},
+    {"update", RunUpdate},
+    {"delete", RunDelete},
     {"generate", RunGenerate},
+    {"passwd", RunPasswd},
 }};
 
 void PrintUsage(std::FILE* out) {
