@@ -34,7 +34,7 @@
 * İşletim sisteminde zaten aktif olan rootkit, kernel-level keylogger veya bellek okuyan root yetkili zararlı yazılımlar.
 * Kullanıcının zayıf veya kolay tahmin edilebilir bir ana parola seçmesi.
 * Fiziksel ekran gözetleme (shoulder surfing).
-* Sistem hazırda bekletme (hibernation / suspend-to-disk) moduna geçtiğinde çekirdeğin tüm RAM içeriğini diske yazması (kullanıcıya şifreli disk/swap önerilir; `nilkey doctor` komutuyla raporlanır).
+* Sistem hazırda bekletme (hibernation / suspend-to-disk) moduna geçtiğinde çekirdeğin tüm RAM içeriğini diske yazması (kullanıcıya şifreli disk/swap önerilir; `nilkey doctor` etkin swap alanlarını sayar ve hibernasyon uyarısı verir, ancak swap'ın şifreli olup olmadığına ve hibernasyon yapılandırmasına bakmaz; bkz. §9.4).
 
 ---
 
@@ -70,7 +70,16 @@ nilkey/
 │   ├── atomic_file.hpp
 │   ├── tlv.hpp
 │   ├── vault.hpp
-│   └── cli.hpp
+│   ├── store.hpp
+│   ├── fd_io.hpp
+│   ├── display.hpp
+│   ├── passgen.hpp
+│   ├── terminal.hpp
+│   ├── args.hpp
+│   ├── cli.hpp
+│   ├── commands.hpp
+│   ├── clipboard.hpp
+│   └── doctor.hpp
 ├── src/
 │   ├── main.cpp
 │   └── ... (karşılık gelen .cpp dosyaları)
@@ -169,7 +178,7 @@ Her kayıt ardışık TLV alanlarından oluşur:
 **Uygulama kararları** (`include/nilkey/tlv.hpp`, `vault.hpp`):
 * **Limitler:** en fazla 100.000 kayıt, kayıt başına en fazla 64 alan, `name` en fazla 1024 bayt. Toplam yük 16 MiB'ı aşamaz (4 baytlık `record_count` ve her kaydın 4 baytlık `record_len` öneki dahil).
 * **Yinelenen alan kodu** bilinmeyen tipler için de reddedilir. Kayıtlar artan tip sırasında yazılır; ayrıştırıcı sıra aramaz.
-* **İsteğe bağlı alanlar:** yok ile boş aynıdır; boş `username`/`url`/`notes` yazılmaz. `password` alanı zorunludur ama boş olabilir; boş parolanın engellenmesi CLI'ya (Faz 4) aittir.
+* **İsteğe bağlı alanlar:** yok ile boş aynıdır; boş `username`/`url`/`notes` yazılmaz. `password` alanı zorunludur ama boş olabilir; boş parolanın engellenmesi CLI'ya aittir (Faz 4'te yapıldı: `ReadSecret` boş satırı reddeder, bkz. §9.4).
 * **UTF-8:** `name`/`username`/`url`/`notes` hem yazarken hem ayrıştırırken katı RFC 3629 doğrulamasından geçer (overlong, surrogate ve U+10FFFF üstü reddedilir, NUL geçerlidir). `password` ham bayttır. `name` karşılaştırması bayt bayttır, Unicode normalizasyonu yoktur (NFC ve NFD ayrı adlardır).
 * **Bilinmeyen alanlar:** dokunulmayan kayıtlar bayt bayt kopyalanır; `Update` eski kaydın bilinmeyen alanlarını yeni kayda taşır, böylece daha yeni bir sürümün yazdığı veri kaybolmaz. Taşıma sonrası alan sayısı 64'ü aşacaksa `kOutOfRange` döner (yazılan kayıt geri okunamazdı).
 * **`Vault` modeli:** açık yük tek bir `SecureBuffer`'da, kayıt konumları gizli olmayan bir indekste tutulur. Her değişiklik yeni yükü tahsisten önce boyutlandırır, yazar, yeniden ayrıştırır ve ancak ondan sonra takas eder; hata yolunda kasa değişmez. Zaman damgası dışarıdan (`now`) verilir. `Update` tüm kullanıcı alanlarını değiştirir (yeniden adlandırma dahil), `created_at` korunur. Açık bir `VaultReader` varken değişiklik `kInvalidArgument` döner.
@@ -220,12 +229,12 @@ Uygulama herhangi bir kasa veya parola verisini okumadan önce sırasıyla şunl
 * **Test edilmeyenler:** `mprotect` ihlali (SIGSEGV) ve canary bozulması (ASan altında sinyal davranışı kırılgan); `HardenProcess()` içindeki `prctl`/`setrlimit` hata yolları (başarısız kılınamaz).
 
 **Sonraki fazlara bırakılanlar:**
-* `sodium_stackzero` çağrısı parola okuma akışında (Faz 4). KDF ve şifre çözme akışlarında Faz 2'de eklendi (§7.5).
-* `main()` içindeki sertleştirme hata dalı gerçek CLI ile birlikte Faz 4'te yeniden düzenlenir.
+* `sodium_stackzero` çağrısı parola okuma akışında: Faz 4'te yapıldı (`ReadSecret` sonunda çağrılır). KDF ve şifre çözme akışlarında Faz 2'de eklendi (§7.5).
+* `main()` içindeki sertleştirme hata dalı: Faz 4'te değişmedi; hata iletisini yazıp çıkış kodu 1 verir, yeniden düzenleme gerekmedi.
 
 ### 7.5 Faz 2 Uygulama Kararları
 
-* `sodium_stackzero(4096)`, anahtar türetme (`DeriveKey`) ve şifre çözme (`Open`) başarıyla tamamlandığında çağrılır; hata dönüş yollarında çağrılmaz.
+* `sodium_stackzero(4096)`, anahtar türetme (`DeriveKey`) ve şifre çözme (`Open`) başarıyla tamamlandığında çağrılır; hata dönüş yollarında çağrılmaz. *(Faz 4, dış inceleme düzeltmesi: başarısız `crypto_pwhash` ve kimlik doğrulama hatası yollarında da çağrılır; bkz. §9.4.)*
 * `Seal` her çağrıda yeni rastgele nonce üretir; aynı (anahtar, nonce) çifti hiç yeniden kullanılmaz.
 
 ---
@@ -244,7 +253,7 @@ Kasa dosyası her zaman `0600` (yalnızca sahip okuma/yazma) izinleriyle tutulur
 
 **Faz 2 Kararları:**
 * **Symlink:** Kasa yolu bir symlink ise yazma ve okuma `kSymlinkRejected` ile reddedilir (`lstat` ile yazmadan önce, `O_NOFOLLOW` ile okurken). Symlink izlenmez, `realpath` ile çözülmez.
-* **Eşzamanlı yazma (bilinen sınırlama):** `atomic_file` katmanı dosya kilidi kullanmaz; iki `nilkey` süreci aynı kasayı aynı anda okuyup değiştirirse son yazan kazanır. Kilit (`flock`), okuma-değiştir-yaz döngüsünü sahiplenen üst katmanda (Faz 4, CLI) ele alınır.
+* **Eşzamanlı yazma (bilinen sınırlama):** `atomic_file` katmanı dosya kilidi kullanmaz; iki `nilkey` süreci aynı kasayı aynı anda okuyup değiştirirse son yazan kazanır. Kilit (`flock`), okuma-değiştir-yaz döngüsünü sahiplenen üst katmanda (Faz 4, CLI) ele alınır. *(Faz 4: kilit `VaultLock` (`<vault>.lock` üzerinde `flock`) ile komut katmanında ele alındı; bkz. §9.4.)*
 * **Okuma:** `ReadVaultFile` yalnızca düzenli dosyaları kabul eder ve `66 + 16 MiB + 16 B` üstündeki dosyaları bellek ayırmadan reddeder; başlık/boyut tutarlılığı `OpenWithPassword` içinde doğrulanır.
 * **Dizin `fsync` hatası:** `rename` sonrası dizin `fsync` başarısız olursa `kIoError` döner, ancak yeni dosya yerindedir.
 
@@ -279,6 +288,8 @@ Kasa dosyası her zaman `0600` (yalnızca sahip okuma/yazma) izinleriyle tutulur
   * `mlock(2)` kilitleri `fork()` sonrası alt sürece aktarılmadığı ve Copy-on-Write riski oluşturduğu için temizleyici alt süreç, kasanın tüm açık bellek tamponları sıfırlanıp serbest bırakıldıktan sonra başlatılır.
   * Alt sürece açık şifre aktarılmaz; yalnızca kopyalanan şifrenin `BLAKE2b` (`crypto_generichash`) özeti aktarılır.
   * Süre dolduğunda panodaki güncel verinin özeti hesaplanır ve `sodium_memcmp` ile karşılaştırılır; yalnızca hala aynı şifre duruyorsa pano temizlenir.
+
+Faz 4'ün uygulama kararları ve bilinen sınırlamaları §9.4'tedir.
 
 ### 9.4 Faz 4 Uygulama Kararları ve Bilinen Sınırlamalar
 
