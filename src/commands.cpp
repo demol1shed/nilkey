@@ -505,6 +505,13 @@ int RunList(const ParsedArgs& request, const Io& io) {
 constexpr unsigned kDefaultClearSeconds = 15;
 constexpr unsigned kMaxClearSeconds = 3600;
 
+// Zeroes the digest of the copied value, if there is one.
+void WipeDigest(std::optional<ClipboardFingerprint>& fingerprint) {
+  if (fingerprint.has_value()) {
+    sodium_memzero(fingerprint->digest.data(), fingerprint->digest.size());
+  }
+}
+
 // Enough to cover the frames a vault read and a copy used (see RunGet).
 constexpr std::size_t kStackToScrub = 16 * 1024;
 
@@ -585,19 +592,26 @@ int RunGet(const ParsedArgs& request, const Io& io) {
     }
     // Straight from the vault's buffer: no further copy of the value is made.
     if (value.empty()) return make_error(ErrorCode::kFieldEmpty);
-    const Result<ClipboardFingerprint> fingerprint = FingerprintOf(value);
-    if (!fingerprint.ok()) return fingerprint.error();
-    if (const Status s = CopyToClipboard(*tool, value); !s.ok()) return s;
-    copied = fingerprint.value();
-    return Ok();
+    Result<ClipboardFingerprint> made = FingerprintOf(value);
+    if (!made.ok()) return made.error();
+    copied = made.value();
+    // `copied` is the one copy the cleaner will inherit. This frame can be part
+    // of RunGet's own (the compiler may inline the lambda), where the scrubbing
+    // below does not reach.
+    sodium_memzero(made.value().digest.data(), made.value().digest.size());
+    return CopyToClipboard(*tool, value);
   }();
-  if (!shown.ok()) return ReportError(shown.error(), io.err);
+  if (!shown.ok()) {
+    WipeDigest(copied);
+    return ReportError(shown.error(), io.err);
+  }
   if (print) return kExitOk;
 
   // The frames of the call above held the value for a while; fork() would copy
   // them into the cleaner.
   sodium_stackzero(kStackToScrub);
   const Status started = StartCleaner(*tool, *copied, seconds.value(), policy);
+  WipeDigest(copied);  // The cleaner has its own copy by now, or there is none.
   if (!started.ok()) {
     // Without a cleaner the value must not stay on the clipboard.
     if (const Status cleared = ClearClipboard(*tool); !cleared.ok()) {

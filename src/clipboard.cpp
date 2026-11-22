@@ -6,6 +6,7 @@
 #include <signal.h>
 #include <sodium.h>
 #include <spawn.h>
+#include <sys/mman.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <time.h>
@@ -300,6 +301,12 @@ constexpr int kReadyTimeoutMs = 2000;
       dup2(null_fd, STDERR_FILENO) < 0) {
     _exit(1);
   }
+
+  // The digest has to stay here for the whole wait, so keep it out of swap. The
+  // parent's locks did not come along through fork(); this process has its own
+  // allowance. Without the lock the parent is told this process did not start
+  // (no ready byte), clears the clipboard and reports it.
+  if (mlock(&fingerprint, sizeof fingerprint) != 0 && policy == MemlockPolicy::kRequire) _exit(1);
 
   const char up = 1;
   ssize_t sent = -1;
