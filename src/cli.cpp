@@ -104,25 +104,25 @@ Result<std::string> ResolveVaultPath(std::optional<std::string_view> flag,
   return std::string(env_home) + "/.local/share/nilkey/default.vault";
 }
 
-int Run(std::span<const char* const> args, std::FILE* out, std::FILE* err) {
+int Run(std::span<const char* const> args, const Io& io) {
   const Result<ParsedArgs> parsed = ParseArgs(args, kCommands);
   if (!parsed.ok()) {
-    std::fprintf(err, "nilkey: %s\nTry 'nilkey --help'.\n", parsed.error().message);
+    std::fprintf(io.err, "nilkey: %s\nTry 'nilkey --help'.\n", parsed.error().message);
     return kExitUsage;
   }
   const ParsedArgs& request = parsed.value();
 
   if (request.globals.help) {
-    PrintUsage(out);
+    PrintUsage(io.out);
     return kExitOk;
   }
   if (request.globals.version) {
-    std::fputs("nilkey " NILKEY_VERSION "\n", out);
+    std::fputs("nilkey " NILKEY_VERSION "\n", io.out);
     return kExitOk;
   }
 
   // The commands arrive in the next steps of Phase 4.
-  std::fprintf(err, "nilkey: '%.*s' is not implemented yet\n",
+  std::fprintf(io.err, "nilkey: '%.*s' is not implemented yet\n",
                static_cast<int>(request.command->name.size()), request.command->name.data());
   return kExitError;
 }

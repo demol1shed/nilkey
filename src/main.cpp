@@ -1,3 +1,5 @@
+#include <unistd.h>
+
 #include <cstdio>
 #include <cstdlib>
 #include <span>
@@ -15,5 +17,5 @@ int main(int argc, char** argv) {
   const std::span<const char* const> args =
       argc > 1 ? std::span<const char* const>(argv + 1, static_cast<std::size_t>(argc - 1))
                : std::span<const char* const>();
-  return nilkey::Run(args, stdout, stderr);
+  return nilkey::Run(args, nilkey::Io{stdout, stderr, STDOUT_FILENO});
 }

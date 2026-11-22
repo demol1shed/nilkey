@@ -34,7 +34,8 @@ Captured RunCaptured(std::initializer_list<const char*> args) {
 
   const std::vector<const char*> v(args);
   Captured result;
-  result.status = nilkey::Run(std::span<const char* const>(v), out, err);
+  // No command tested here writes a secret, so there is no descriptor for them.
+  result.status = nilkey::Run(std::span<const char* const>(v), nilkey::Io{out, err, -1});
   // fclose() updates the size variables, so read them only afterwards.
   std::fclose(out);
   std::fclose(err);
