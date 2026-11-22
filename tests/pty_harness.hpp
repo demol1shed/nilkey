@@ -25,6 +25,7 @@
 #include <cstdlib>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace nilkey::test {
@@ -44,6 +45,10 @@ class PtyChild {
     const char* stdin_path = nullptr;   // A file to read as stdin, instead of the terminal.
     const char* stdout_path = nullptr;  // A file (mode 0600) that receives stdout.
     bool no_memlock = false;            // RLIMIT_MEMLOCK of 0: locking memory fails.
+    // Changes to the program's environment, applied in this order: the names
+    // in env_unset are removed, then each pair in env_set is set.
+    std::vector<std::string> env_unset;
+    std::vector<std::pair<std::string, std::string>> env_set;
   };
 
   // Runs `program` with `args` (args[0] is the program name). Prompts and
@@ -71,6 +76,12 @@ class PtyChild {
       if (options.no_memlock) {
         const struct rlimit none = {0, 0};
         if (setrlimit(RLIMIT_MEMLOCK, &none) != 0) return 127;
+      }
+      for (const std::string& name : options.env_unset) {
+        if (unsetenv(name.c_str()) != 0) return 127;
+      }
+      for (const auto& [name, value] : options.env_set) {
+        if (setenv(name.c_str(), value.c_str(), 1) != 0) return 127;
       }
       execv(program, argv.data());
       return 126;  // exec failed
