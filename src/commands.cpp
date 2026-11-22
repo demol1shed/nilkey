@@ -132,6 +132,22 @@ Result<LoadedVault> LoadWithMaster(const std::string& path, const SecureBuffer& 
   return LoadVault(path, guard.value().bytes(), policy);
 }
 
+// The cycle of every command that changes the vault: take the lock, open the
+// vault, let `change` edit it, save it, release the lock. The master password
+// is destroyed as soon as the vault is open. Nothing here may fork (see
+// VaultLock).
+template <typename Change>
+Status ChangeVault(const std::string& path, std::optional<SecureBuffer>& master,
+                   MemlockPolicy policy, Change change) {
+  const Result<VaultLock> lock = VaultLock::Acquire(path);
+  if (!lock.ok()) return lock.error();
+  Result<LoadedVault> loaded = LoadWithMaster(path, *master, policy);
+  master.reset();
+  if (!loaded.ok()) return loaded.error();
+  if (const Status s = change(loaded.value()); !s.ok()) return s;
+  return SaveVault(path, loaded.value().key, loaded.value().vault);
+}
+
 Status PutChar(std::FILE* out, char c) {
   return std::fputc(c, out) == EOF ? Status(make_error(ErrorCode::kIoError)) : Ok();
 }
@@ -245,30 +261,20 @@ int RunAdd(const ParsedArgs& request, const Io& io) {
   const Result<std::int64_t> now = Now();
   if (!now.ok()) return ReportError(now.error(), io.err);
 
-  const Result<VaultLock> lock = VaultLock::Acquire(path.value());
-  if (!lock.ok()) return ReportError(lock.error(), io.err);
-  Result<LoadedVault> loaded = LoadWithMaster(path.value(), *master, policy);
-  master.reset();  // Not needed any more.
-  if (!loaded.ok()) return ReportError(loaded.error(), io.err);
-
-  {
-    const Result<ScopedReadGuard> password_bytes = ScopedReadGuard::Open(password.value());
-    const Result<ScopedReadGuard> notes_bytes = ScopedReadGuard::Open(notes.value());
-    if (!password_bytes.ok()) return ReportError(password_bytes.error(), io.err);
-    if (!notes_bytes.ok()) return ReportError(notes_bytes.error(), io.err);
-    const RecordInput input{AsBytes(request.positionals[0]),
-                            AsBytes(request.Value("username").value_or("")),
-                            password_bytes.value().bytes(),
-                            AsBytes(request.Value("url").value_or("")),
-                            notes_bytes.value().bytes()};
-    if (const Status s = loaded.value().vault.Add(input, now.value()); !s.ok()) {
-      return ReportError(s.error(), io.err);
-    }
-  }
-  if (const Status s = SaveVault(path.value(), loaded.value().key, loaded.value().vault);
-      !s.ok()) {
-    return ReportError(s.error(), io.err);
-  }
+  const Status saved =
+      ChangeVault(path.value(), master, policy, [&](LoadedVault& loaded) -> Status {
+        const Result<ScopedReadGuard> password_bytes = ScopedReadGuard::Open(password.value());
+        const Result<ScopedReadGuard> notes_bytes = ScopedReadGuard::Open(notes.value());
+        if (!password_bytes.ok()) return password_bytes.error();
+        if (!notes_bytes.ok()) return notes_bytes.error();
+        const RecordInput input{AsBytes(request.positionals[0]),
+                                AsBytes(request.Value("username").value_or("")),
+                                password_bytes.value().bytes(),
+                                AsBytes(request.Value("url").value_or("")),
+                                notes_bytes.value().bytes()};
+        return loaded.vault.Add(input, now.value());
+      });
+  if (!saved.ok()) return ReportError(saved.error(), io.err);
 
   std::fputs("Added \"", io.err);
   if (const Status s = WritePrintable(io.err, AsBytes(request.positionals[0])); !s.ok()) {
