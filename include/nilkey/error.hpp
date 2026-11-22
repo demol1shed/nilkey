@@ -29,6 +29,8 @@ enum class ErrorCode : std::uint8_t {
   kEmptyInput,
   kInputMismatch,
   kAborted,
+  kVaultNotFound,
+  kVaultExists,
 };
 
 // Carries a code and a static description. It never holds passwords, keys or
@@ -86,6 +88,10 @@ constexpr const char* describe(ErrorCode code) {
       return "the two entries do not match";
     case ErrorCode::kAborted:
       return "aborted";
+    case ErrorCode::kVaultNotFound:
+      return "vault file not found; run `nilkey init` to create one";
+    case ErrorCode::kVaultExists:
+      return "vault file already exists";
   }
   return "unknown error";
 }
