@@ -1,5 +1,6 @@
 #include "nilkey/commands.hpp"
 
+#include <sodium.h>
 #include <unistd.h>
 
 #include <charconv>
@@ -14,6 +15,7 @@
 #include <system_error>
 #include <utility>
 
+#include "nilkey/clipboard.hpp"
 #include "nilkey/display.hpp"
 #include "nilkey/fd_io.hpp"
 #include "nilkey/passgen.hpp"
@@ -486,6 +488,120 @@ int RunList(const ParsedArgs& request, const Io& io) {
     }
   }
   if (std::fflush(io.out) != 0) return ReportError(make_error(ErrorCode::kIoError), io.err);
+  return kExitOk;
+}
+
+// How long the clipboard keeps a copied value (SPEC.md 9.2): 15 seconds unless
+// --timeout says otherwise, and never longer than an hour.
+constexpr unsigned kDefaultClearSeconds = 15;
+constexpr unsigned kMaxClearSeconds = 3600;
+
+// Enough to cover the frames a vault read and a copy used (see RunGet).
+constexpr std::size_t kStackToScrub = 16 * 1024;
+
+Result<unsigned> ParseClearSeconds(const ParsedArgs& request) {
+  const std::optional<std::string_view> text = request.Value("timeout");
+  if (!text.has_value()) return kDefaultClearSeconds;
+  if (request.Has("print")) {
+    return Error{ErrorCode::kUsage, "--timeout does not apply to --print"};
+  }
+  const char* const first = text->data();
+  const char* const last = first + text->size();
+  unsigned seconds = 0;
+  const std::from_chars_result parsed = std::from_chars(first, last, seconds);
+  if (parsed.ec != std::errc() || parsed.ptr != last || seconds < 1 ||
+      seconds > kMaxClearSeconds) {
+    return Error{ErrorCode::kUsage, "--timeout must be a number of seconds from 1 to 3600"};
+  }
+  return seconds;
+}
+
+// The bytes of the field that --field names. The name was checked before.
+std::span<const std::byte> FieldOf(const Record& record, std::string_view field) {
+  if (field == "username") return record.username;
+  if (field == "url") return record.url;
+  if (field == "notes") return record.notes;
+  return record.password;
+}
+
+int RunGet(const ParsedArgs& request, const Io& io) {
+  const MemlockPolicy policy = PolicyFor(request.globals);
+  const Result<std::string> path = VaultPathFor(request);
+  if (!path.ok()) return ReportError(path.error(), io.err);
+
+  // Everything that can be checked without a password comes first.
+  const std::string_view field = request.Value("field").value_or("password");
+  if (field != "password" && field != "username" && field != "url" && field != "notes") {
+    return ReportError(
+        Error{ErrorCode::kUsage, "--field must be password, username, url or notes"}, io.err);
+  }
+  const Result<unsigned> seconds = ParseClearSeconds(request);
+  if (!seconds.ok()) return ReportError(seconds.error(), io.err);
+  if (const Status s = ValidateName(request); !s.ok()) return ReportError(s.error(), io.err);
+  if (const Status s = RequireVaultExists(path.value()); !s.ok()) {
+    return ReportError(s.error(), io.err);
+  }
+  const bool print = request.Has("print");
+  // No tool, no password prompt: nobody should type the master password and
+  // then be told there is nowhere to copy to.
+  std::optional<ClipboardTool> tool;
+  if (!print) {
+    Result<ClipboardTool> found = DetectClipboardTool(
+        {std::getenv("PATH"), std::getenv("WAYLAND_DISPLAY"), std::getenv("DISPLAY")});
+    if (!found.ok()) return ReportError(found.error(), io.err);
+    tool.emplace(std::move(found).value());
+  }
+
+  // The master password, the vault, its key and the value all live only inside
+  // this call, so none of them is alive when the cleaner process is forked.
+  std::optional<ClipboardFingerprint> copied;
+  const Status shown = [&]() -> Status {
+    Result<SecureBuffer> master = ReadSecret("Master password: ", policy);
+    if (!master.ok()) return master.error();
+    const Result<LoadedVault> loaded = LoadWithMaster(path.value(), master.value(), policy);
+    if (!loaded.ok()) return loaded.error();
+    const Result<VaultReader> reader = loaded.value().vault.Open();
+    if (!reader.ok()) return reader.error();
+    const std::optional<std::size_t> index =
+        reader.value().Find(AsBytes(request.positionals[0]));
+    if (!index.has_value()) return make_error(ErrorCode::kNotFound);
+    const Result<Record> record = reader.value().Get(*index);
+    if (!record.ok()) return record.error();
+    const std::span<const std::byte> value = FieldOf(record.value(), field);
+
+    if (print) {
+      // Anything buffered on `out` goes first; the value is written directly.
+      if (std::fflush(io.out) != 0) return make_error(ErrorCode::kIoError);
+      return WriteSecretLine(io.out_fd, value);
+    }
+    // Straight from the vault's buffer: no further copy of the value is made.
+    if (value.empty()) return make_error(ErrorCode::kFieldEmpty);
+    const Result<ClipboardFingerprint> fingerprint = FingerprintOf(value);
+    if (!fingerprint.ok()) return fingerprint.error();
+    if (const Status s = CopyToClipboard(*tool, value); !s.ok()) return s;
+    copied = fingerprint.value();
+    return Ok();
+  }();
+  if (!shown.ok()) return ReportError(shown.error(), io.err);
+  if (print) return kExitOk;
+
+  // The frames of the call above held the value for a while; fork() would copy
+  // them into the cleaner.
+  sodium_stackzero(kStackToScrub);
+  const Status started = StartCleaner(*tool, *copied, seconds.value(), policy);
+  if (!started.ok()) {
+    // Without a cleaner the value must not stay on the clipboard.
+    if (const Status cleared = ClearClipboard(*tool); !cleared.ok()) {
+      std::fputs("nilkey: the clipboard may still hold the value; clear it yourself\n", io.err);
+    }
+    return ReportError(started.error(), io.err);
+  }
+
+  std::fprintf(io.err, "Copied the %.*s of \"", static_cast<int>(field.size()), field.data());
+  if (const Status s = WritePrintable(io.err, AsBytes(request.positionals[0])); !s.ok()) {
+    return ReportError(s.error(), io.err);
+  }
+  std::fprintf(io.err, "\" to the clipboard; it is cleared in %u seconds.\n", seconds.value());
   return kExitOk;
 }
 
