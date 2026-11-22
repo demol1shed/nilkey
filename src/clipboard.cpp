@@ -1,6 +1,8 @@
 #include "nilkey/clipboard.hpp"
 
 #include <fcntl.h>
+#include <poll.h>
+#include <pthread.h>
 #include <signal.h>
 #include <sodium.h>
 #include <spawn.h>
@@ -10,7 +12,9 @@
 #include <unistd.h>
 
 #include <cerrno>
+#include <climits>
 #include <cstdint>
+#include <cstdio>
 #include <optional>
 #include <string_view>
 
@@ -229,6 +233,70 @@ Result<SecureBuffer> ReadClipboard(const ClipboardTool& tool, std::size_t max_si
   return text;
 }
 
+constexpr int kReadyTimeoutMs = 2000;
+
+// The detached process. Never returns.
+[[noreturn]] void CleanerProcess(const ClipboardTool& tool,
+                                 const ClipboardFingerprint& fingerprint, unsigned seconds,
+                                 MemlockPolicy policy, const sigset_t& inherited_mask,
+                                 int ready_fd) {
+  // The terminal's hang-up and keyboard signals must not stop the cleaner. The
+  // parent blocked SIGHUP before the fork, so one that arrived in between is
+  // still pending and is dropped when it is ignored here.
+  for (const int signo : {SIGHUP, SIGINT, SIGQUIT, SIGTSTP}) {
+    struct sigaction ignore = {};
+    ignore.sa_handler = SIG_IGN;
+    sigemptyset(&ignore.sa_mask);
+    if (sigaction(signo, &ignore, nullptr) != 0) _exit(1);
+  }
+  if (setsid() < 0) _exit(1);
+  if (pthread_sigmask(SIG_SETMASK, &inherited_mask, nullptr) != 0) _exit(1);
+
+  const int null_fd = open("/dev/null", O_RDWR | O_CLOEXEC);
+  if (null_fd < 0) _exit(1);
+  if (dup2(null_fd, STDIN_FILENO) < 0 || dup2(null_fd, STDOUT_FILENO) < 0 ||
+      dup2(null_fd, STDERR_FILENO) < 0) {
+    _exit(1);
+  }
+
+  const char up = 1;
+  ssize_t sent = -1;
+  while ((sent = write(ready_fd, &up, 1)) < 0 && errno == EINTR) {
+  }
+  if (sent != 1) _exit(1);
+
+  // Nothing else may stay open: the terminal, the pipe above, whatever the
+  // parent had.
+  if (close_range(3, UINT_MAX, 0) != 0) {
+    for (int fd = 3; fd < 1024; ++fd) {
+      if (close(fd) != 0 && errno != EBADF) _exit(1);
+    }
+  }
+
+  const Result<bool> done = RunCleaner(tool, fingerprint, seconds, policy);
+  // The result has nobody to go to; _exit() runs no atexit handlers and no
+  // leak checks, and does not touch any stdio buffer.
+  _exit(done.ok() ? 0 : 1);
+}
+
+// Waits up to kReadyTimeoutMs for the cleaner's first byte.
+bool CleanerIsUp(int ready_fd) {
+  struct pollfd waiting = {ready_fd, POLLIN, 0};
+  const std::int64_t deadline = NowMs() + kReadyTimeoutMs;
+  for (;;) {
+    const std::int64_t left = deadline - NowMs();
+    if (left <= 0) return false;
+    const int r = poll(&waiting, 1, static_cast<int>(left));
+    if (r < 0 && errno == EINTR) continue;
+    if (r <= 0) return false;
+    char byte = 0;
+    ssize_t got = -1;
+    while ((got = read(ready_fd, &byte, 1)) < 0 && errno == EINTR) {
+    }
+    return got == 1;
+  }
+}
+
 }  // namespace
 
 Result<ClipboardTool> DetectClipboardTool(const ClipboardEnv& env) {
@@ -311,6 +379,69 @@ Result<bool> RunCleaner(const ClipboardTool& tool, const ClipboardFingerprint& f
 
   if (const Status cleared = ClearClipboard(tool); !cleared.ok()) return cleared.error();
   return true;
+}
+
+Status StartCleaner(const ClipboardTool& tool, const ClipboardFingerprint& fingerprint,
+                    unsigned seconds, MemlockPolicy policy) {
+  // First of all: fork() copies the stack below this frame too, and the frames
+  // that were used for the secret (hashing, writing it to the tool) have not
+  // been overwritten since.
+  sodium_stackzero(4096);
+
+  // Output that is still buffered must not be written a second time by a child.
+  if (std::fflush(nullptr) != 0) return make_error(ErrorCode::kIoError);
+
+  const Result<Pipe> ready = MakePipe();
+  if (!ready.ok()) return make_error(ErrorCode::kIoError);
+  // The child redirects 0-2 and writes to this pipe; it must not be one of them.
+  if (ready.value().read_end <= STDERR_FILENO || ready.value().write_end <= STDERR_FILENO) {
+    CloseQuietly(ready.value().read_end);
+    CloseQuietly(ready.value().write_end);
+    return make_error(ErrorCode::kIoError);
+  }
+
+  // SIGHUP is blocked across the fork: until the child has its own session it
+  // is still in the parent's process group, and a hang-up sent to that group
+  // (the terminal closing, the session leader exiting) would kill it before it
+  // could do its job.
+  sigset_t hangup;
+  sigset_t before;
+  sigemptyset(&hangup);
+  sigaddset(&hangup, SIGHUP);
+  if (pthread_sigmask(SIG_BLOCK, &hangup, &before) != 0) {
+    CloseQuietly(ready.value().read_end);
+    CloseQuietly(ready.value().write_end);
+    return make_error(ErrorCode::kIoError);
+  }
+
+  const pid_t pid = fork();
+  if (pid == 0) {
+    CleanerProcess(tool, fingerprint, seconds, policy, before, ready.value().write_end);
+  }
+  const bool restored = pthread_sigmask(SIG_SETMASK, &before, nullptr) == 0;
+  CloseQuietly(ready.value().write_end);
+  if (pid < 0 || !restored) {
+    CloseQuietly(ready.value().read_end);
+    if (pid > 0 && kill(pid, SIGKILL) == 0) {
+      int status = 0;
+      while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {
+      }
+    }
+    return make_error(ErrorCode::kIoError);
+  }
+
+  const bool up = CleanerIsUp(ready.value().read_end);
+  CloseQuietly(ready.value().read_end);
+  if (!up) {
+    if (kill(pid, SIGKILL) != 0) {
+      // Already gone.
+    }
+    int status = 0;
+    while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {
+    }
+    return make_error(ErrorCode::kClipboardFailed);
+  }
+  return Ok();
 }
 
 }  // namespace nilkey
