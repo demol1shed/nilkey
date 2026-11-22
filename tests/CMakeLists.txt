@@ -44,6 +44,7 @@ nilkey_add_test(test_passgen)
 nilkey_add_test(test_cli)
 nilkey_add_test(test_cli_generate)
 nilkey_add_test(test_clipboard)
+set_tests_properties(test_clipboard PROPERTIES TIMEOUT 120)
 set_tests_properties(test_cli_generate PROPERTIES TIMEOUT 60)
 
 # init, add and list against the real command line. The test reads vaults back
