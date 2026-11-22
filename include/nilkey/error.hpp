@@ -31,6 +31,7 @@ enum class ErrorCode : std::uint8_t {
   kAborted,
   kVaultNotFound,
   kVaultExists,
+  kNotConfirmed,
 };
 
 // Carries a code and a static description. It never holds passwords, keys or
@@ -92,6 +93,8 @@ constexpr const char* describe(ErrorCode code) {
       return "vault file not found; run `nilkey init` to create one";
     case ErrorCode::kVaultExists:
       return "vault file already exists";
+    case ErrorCode::kNotConfirmed:
+      return "not deleted";
   }
   return "unknown error";
 }
