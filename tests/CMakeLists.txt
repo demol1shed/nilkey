@@ -36,6 +36,7 @@ nilkey_add_test(test_atomic_file nilkey_core_test)
 nilkey_add_test(test_tlv)
 nilkey_add_test(test_vault nilkey_core_test)
 nilkey_add_test(test_args)
+nilkey_add_test(test_passgen)
 nilkey_add_test(test_cli)
 
 # Drives real pseudo-terminals; a hang must fail the test, not the CI job.
