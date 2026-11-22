@@ -53,7 +53,10 @@ Result<SecureBuffer> DeriveKey(std::span<const std::byte> password, const KdfPar
                                  static_cast<unsigned long long>(params.iterations),
                                  static_cast<std::size_t>(MemoryBytes(params)),
                                  crypto_pwhash_ALG_ARGON2ID13);
-    if (rc != 0) return make_error(ErrorCode::kCryptoFailed);
+    if (rc != 0) {
+      sodium_stackzero(4096);  // The frames below held the password and the working state.
+      return make_error(ErrorCode::kCryptoFailed);
+    }
   }
 
   sodium_stackzero(4096);
@@ -145,6 +148,9 @@ Result<SecureBuffer> Open(std::span<const std::byte> file, const VaultKey& key,
         header_bytes.size(), AsU8(header.value().nonce.data()),
         AsU8(key_guard.value().bytes().data()));
     if (rc != 0 || plaintext_len != ciphertext_len - kTagSize) {
+      // The most common failure, a wrong password, must leave nothing behind
+      // either.
+      sodium_stackzero(4096);
       return make_error(ErrorCode::kAuthenticationFailed);
     }
   }
