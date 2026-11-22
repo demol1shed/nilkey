@@ -61,6 +61,7 @@ int ReportError(const Error& error, std::FILE* err) {
     std::fputs("Try 'nilkey --help'.\n", err);
     return kExitUsage;
   }
+  if (error.code == ErrorCode::kAborted) return kExitAborted;
   return kExitError;
 }
 

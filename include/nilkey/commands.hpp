@@ -17,8 +17,9 @@ namespace nilkey {
 using CommandHandler = int (*)(const ParsedArgs& request, const Io& io);
 
 // Prints `error` to `err` and returns the exit status for it: 2 for a wrong
-// command line (with a pointer to --help), 1 for anything else. Only the static
-// message is printed, never a value that came from the user.
+// command line (with a pointer to --help), 130 if the user aborted, 1 for
+// anything else. Only the static message is printed, never a value that came
+// from the user.
 int ReportError(const Error& error, std::FILE* err);
 
 // kAllowUnlocked if --allow-unlocked-memory was given, kRequire otherwise.

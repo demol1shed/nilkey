@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "nilkey/cli.hpp"
+#include "nilkey/commands.hpp"
 #include "test_framework.hpp"
 
 using nilkey::ErrorCode;
@@ -137,6 +138,50 @@ NILKEY_TEST(vault_path_errors) {
 
   const auto empty_home = ResolveVaultPath(std::nullopt, "", "");
   NILKEY_EXPECT(!empty_home.ok());
+}
+
+namespace {
+
+// What an error turns into: the exit status and the one thing printed.
+struct Reported {
+  int status;
+  std::string err;
+};
+
+Reported ReportCaptured(nilkey::ErrorCode code) {
+  char* buffer = nullptr;
+  std::size_t size = 0;
+  std::FILE* err = open_memstream(&buffer, &size);
+  if (err == nullptr) std::abort();
+  Reported result;
+  result.status = nilkey::ReportError(nilkey::make_error(code), err);
+  std::fclose(err);
+  result.err.assign(buffer == nullptr ? "" : buffer, size);
+  std::free(buffer);
+  return result;
+}
+
+}  // namespace
+
+NILKEY_TEST(a_wrong_command_line_exits_2_with_a_hint) {
+  const Reported r = ReportCaptured(ErrorCode::kUsage);
+  NILKEY_EXPECT(r.status == nilkey::kExitUsage);
+  NILKEY_EXPECT(r.err.find("Try 'nilkey --help'.") != std::string::npos);
+}
+
+NILKEY_TEST(an_abort_exits_130_and_says_so_once) {
+  const Reported r = ReportCaptured(ErrorCode::kAborted);
+  NILKEY_EXPECT(r.status == 130);
+  NILKEY_EXPECT(r.err == "nilkey: aborted\n");
+}
+
+NILKEY_TEST(any_other_error_exits_1_with_its_static_message) {
+  for (const ErrorCode code : {ErrorCode::kIoError, ErrorCode::kAuthenticationFailed,
+                               ErrorCode::kVaultNotFound, ErrorCode::kMemoryLockFailed}) {
+    const Reported r = ReportCaptured(code);
+    NILKEY_EXPECT(r.status == nilkey::kExitError);
+    NILKEY_EXPECT(r.err == std::string("nilkey: ") + nilkey::describe(code) + "\n");
+  }
 }
 
 NILKEY_TEST_MAIN()
