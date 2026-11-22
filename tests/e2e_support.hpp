@@ -15,6 +15,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "nilkey/store.hpp"
@@ -52,14 +53,24 @@ struct Run {
   std::string out;        // What went to stdout.
 };
 
+// Environment changes for the CLI under test (see PtyChild::ExecOptions).
+struct CliEnv {
+  std::vector<std::string> unset;
+  std::vector<std::pair<std::string, std::string>> set;
+};
+
 inline PtyChild StartCli(const TempDir& dir, const std::string& vault, const std::vector<std::string>& args,
-                  const char* stdin_path = nullptr) {
+                  const char* stdin_path = nullptr, const CliEnv* env = nullptr) {
   std::vector<std::string> full = {"nilkey", "--vault", vault};
   full.insert(full.end(), args.begin(), args.end());
   const std::string stdout_path = dir.Path("stdout.txt");
   PtyChild::ExecOptions options;
   options.stdin_path = stdin_path;
   options.stdout_path = stdout_path.c_str();
+  if (env != nullptr) {
+    options.env_unset = env->unset;
+    options.env_set = env->set;
+  }
   return PtyChild::StartExec(NILKEY_E2E_BINARY, full, options);
 }
 
@@ -77,8 +88,9 @@ inline std::string TextOf(const Bytes& bytes) {
 }
 
 inline Run RunCli(const TempDir& dir, const std::string& vault, const std::vector<std::string>& args,
-           const std::vector<Answer>& answers, const char* stdin_path = nullptr) {
-  PtyChild child = StartCli(dir, vault, args, stdin_path);
+           const std::vector<Answer>& answers, const char* stdin_path = nullptr,
+           const CliEnv* env = nullptr) {
+  PtyChild child = StartCli(dir, vault, args, stdin_path, env);
   Run run;
   run.answered = Reply(child, answers);
   if (!run.answered) child.Kill(SIGKILL);
@@ -169,6 +181,22 @@ inline Stored Lookup(const std::string& vault, const std::string& master, std::s
   stored.created_at = record.value().created_at;
   stored.updated_at = record.value().updated_at;
   return stored;
+}
+
+// Adds a record through the library, for values the terminal cannot carry (an
+// embedded NUL byte). The vault must exist.
+inline bool SeedRecord(const std::string& vault, const std::string& master, std::string_view name,
+                       std::string_view username, std::string_view password,
+                       std::string_view notes) {
+  const auto bytes = [](std::string_view text) {
+    return std::span<const std::byte>(reinterpret_cast<const std::byte*>(text.data()),
+                                      text.size());
+  };
+  auto loaded = nilkey::LoadVault(vault, bytes(master), kRequire);
+  if (!loaded.ok()) return false;
+  const nilkey::RecordInput input{bytes(name), bytes(username), bytes(password), {}, bytes(notes)};
+  if (!loaded.value().vault.Add(input, 1700000000).ok()) return false;
+  return nilkey::SaveVault(vault, loaded.value().key, loaded.value().vault).ok();
 }
 
 inline constexpr std::string_view kAlphabet =
