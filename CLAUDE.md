@@ -107,8 +107,8 @@ Her fazın kodlaması ve test koşusu bittikten sonra kullanıcıya kısa bir **
 
 ## 6. Faz Takibi
 
-* **Mevcut Faz:** Faz 4 (CLI, Terminal Girişi, Pano ve `doctor`)
-* **Tamamlanan Fazlar:** Faz 0 (Proje İskeleti ve Derleme Kapısı), PR #2; Faz 1 (Güvenli Bellek ve Süreç Sertleştirme), PR #5 ve #6; Faz 2 (Kriptografik Çekirdek ve Dosya Katmanı), PR #10, #11, #12 ve #13; Faz 3 (İkili TLV Serileştirme ve Kasa Veri Modeli), PR #15, #16 ve #17.
+* **Mevcut Faz:** Yok (SPEC §11'deki Faz 0-4 tamamlandı)
+* **Tamamlanan Fazlar:** Faz 0 (Proje İskeleti ve Derleme Kapısı), PR #2; Faz 1 (Güvenli Bellek ve Süreç Sertleştirme), PR #5 ve #6; Faz 2 (Kriptografik Çekirdek ve Dosya Katmanı), PR #10, #11, #12 ve #13; Faz 3 (İkili TLV Serileştirme ve Kasa Veri Modeli), PR #15, #16 ve #17; Faz 4 (CLI, Terminal Girişi, Pano ve `doctor`), PR #18, #19, #20, #21, #22, #23, #24, #25, #26 ve #27.
 
 ---
 
