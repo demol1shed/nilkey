@@ -71,6 +71,11 @@ set_tests_properties(test_crypto_production_kdf PROPERTIES LABELS slow TIMEOUT 1
 # lock-failure policy can only be tested without them.
 if(NOT NILKEY_ENABLE_SANITIZERS)
   nilkey_add_test(test_memlock_policy)
+
+  nilkey_add_test(test_cli_memlock)
+  add_dependencies(test_cli_memlock nilkey_e2e)
+  target_compile_definitions(test_cli_memlock PRIVATE NILKEY_E2E_BINARY="$<TARGET_FILE:nilkey_e2e>")
+  set_tests_properties(test_cli_memlock PROPERTIES TIMEOUT 120)
 endif()
 
 # Gate self-checks: each of these must fail for the stated reason.
