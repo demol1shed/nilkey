@@ -68,7 +68,7 @@ struct Handler {
   CommandHandler run;
 };
 
-constexpr std::array<Handler, 8> kHandlers = {{
+constexpr std::array<Handler, 9> kHandlers = {{
     {"init", RunInit},
     {"add", RunAdd},
     {"get", RunGet},
@@ -77,7 +77,11 @@ constexpr std::array<Handler, 8> kHandlers = {{
     {"delete", RunDelete},
     {"generate", RunGenerate},
     {"passwd", RunPasswd},
+    {"doctor", RunDoctor},
 }};
+
+// Every command in the table has a handler.
+static_assert(kHandlers.size() == kCommands.size());
 
 void PrintUsage(std::FILE* out) {
   std::fputs(
@@ -141,9 +145,8 @@ int Run(std::span<const char* const> args, const Io& io) {
     if (handler.name == request.command->name) return handler.run(request, io);
   }
 
-  // The other commands arrive in the next steps of Phase 4.
-  std::fprintf(io.err, "nilkey: '%.*s' is not implemented yet\n",
-               static_cast<int>(request.command->name.size()), request.command->name.data());
+  // Unreachable: the static_assert above ties the two tables together.
+  std::fputs("nilkey: internal error: command without a handler\n", io.err);
   return kExitError;
 }
 
