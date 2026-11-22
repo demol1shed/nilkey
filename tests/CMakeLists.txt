@@ -38,6 +38,8 @@ nilkey_add_test(test_vault nilkey_core_test)
 nilkey_add_test(test_args)
 nilkey_add_test(test_passgen)
 nilkey_add_test(test_cli)
+nilkey_add_test(test_cli_generate)
+set_tests_properties(test_cli_generate PROPERTIES TIMEOUT 60)
 
 # Drives real pseudo-terminals; a hang must fail the test, not the CI job.
 nilkey_add_test(test_terminal)
