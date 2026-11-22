@@ -1,17 +1,20 @@
 #ifndef NILKEY_TEST_PTY_HARNESS_HPP
 #define NILKEY_TEST_PTY_HARNESS_HPP
 
-// Runs a function in a child process whose terminal is a pseudo-terminal the
-// test controls, so code that reads /dev/tty can be tested for real.
+// Runs a function, or a program, in a child process whose terminal is a
+// pseudo-terminal the test controls, so code that reads /dev/tty can be tested
+// for real.
 //
-// The child reports its result through its exit status (one code per check)
+// A function reports its result through its exit status (one code per check)
 // and never prints values, so a failing test cannot leak a secret. A missing
-// pty makes the test fail loudly instead of being skipped.
+// pty makes the test fail loudly instead of being skipped. A program is judged
+// by its exit status and its output.
 
 #include <fcntl.h>
 #include <poll.h>
 #include <signal.h>
 #include <sys/ioctl.h>
+#include <sys/resource.h>
 #include <sys/wait.h>
 #include <termios.h>
 #include <unistd.h>
@@ -22,6 +25,7 @@
 #include <cstdlib>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace nilkey::test {
 
@@ -32,36 +36,52 @@ class PtyChild {
   // `controlling_tty` false the slave is not made the controlling terminal, so
   // opening /dev/tty fails in the child.
   static PtyChild Start(int (*body)(), bool controlling_tty = true) {
-    // O_NOCTTY: the test process itself must never acquire this terminal.
-    const int master = posix_openpt(O_RDWR | O_NOCTTY);
-    if (master < 0) Die("posix_openpt failed (no pty available)");
-    char slave_name[128];
-    if (grantpt(master) != 0 || unlockpt(master) != 0 ||
-        ptsname_r(master, slave_name, sizeof slave_name) != 0) {
-      Die("cannot set up the pty");
-    }
+    return Spawn(controlling_tty, body);
+  }
 
-    const pid_t pid = fork();
-    if (pid < 0) Die("fork failed");
-    if (pid == 0) {
-      if (close(master) != 0) _exit(120);
-      if (setsid() < 0) _exit(121);
-      // Without O_NOCTTY a session leader would acquire the terminal on open.
-      const int slave = open(slave_name, O_RDWR | O_NOCTTY);
-      if (slave < 0) _exit(122);
-      if (controlling_tty && ioctl(slave, TIOCSCTTY, 0) != 0) _exit(123);
-      if (dup2(slave, 0) < 0 || dup2(slave, 1) < 0 || dup2(slave, 2) < 0) _exit(124);
-      if (slave > 2 && close(slave) != 0) _exit(125);
-      _exit(body());  // _exit: no atexit handlers, no sanitizer leak check.
-    }
-    return PtyChild(master, pid);
+  // What a program started with StartExec() gets besides the terminal.
+  struct ExecOptions {
+    const char* stdin_path = nullptr;   // A file to read as stdin, instead of the terminal.
+    const char* stdout_path = nullptr;  // A file (mode 0600) that receives stdout.
+    bool no_memlock = false;            // RLIMIT_MEMLOCK of 0: locking memory fails.
+  };
+
+  // Runs `program` with `args` (args[0] is the program name). Prompts and
+  // messages on stderr and /dev/tty appear in output(). Files, not pipes, carry
+  // stdin and stdout: a parent that writes a large stdin before the program asks
+  // for it would block against a child that waits for the terminal.
+  static PtyChild StartExec(const char* program, const std::vector<std::string>& args) {
+    return StartExec(program, args, ExecOptions{});
+  }
+  static PtyChild StartExec(const char* program, const std::vector<std::string>& args,
+                            const ExecOptions& options) {
+    std::vector<char*> argv;
+    for (const std::string& arg : args) argv.push_back(const_cast<char*>(arg.c_str()));
+    argv.push_back(nullptr);
+
+    return Spawn(/*controlling_tty=*/true, [&]() -> int {
+      if (options.stdin_path != nullptr) {
+        const int in = open(options.stdin_path, O_RDONLY | O_CLOEXEC);
+        if (in < 0 || dup2(in, 0) < 0) return 127;
+      }
+      if (options.stdout_path != nullptr) {
+        const int out = open(options.stdout_path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
+        if (out < 0 || dup2(out, 1) < 0) return 127;
+      }
+      if (options.no_memlock) {
+        const struct rlimit none = {0, 0};
+        if (setrlimit(RLIMIT_MEMLOCK, &none) != 0) return 127;
+      }
+      execv(program, argv.data());
+      return 126;  // exec failed
+    });
   }
 
   PtyChild(const PtyChild&) = delete;
   PtyChild& operator=(const PtyChild&) = delete;
 
   ~PtyChild() {
-    if (pid_ > 0) {
+    if (pid_ > 0 && !reaped_) {
       kill(pid_, SIGKILL);
       int status = 0;
       waitpid(pid_, &status, 0);
@@ -104,20 +124,43 @@ class PtyChild {
 
   void Kill(int signo) const { kill(pid_, signo); }
 
+  // True while the child has not exited. Collects its exit if it has, so a
+  // later Wait() still reports it.
+  bool Running() {
+    if (pid_ <= 0 || reaped_) return false;
+    int status = 0;
+    const pid_t r = waitpid(pid_, &status, WNOHANG);
+    if (r == pid_) {
+      reaped_ = true;
+      status_ = status;
+      return false;
+    }
+    return true;
+  }
+
+  // Reads what the child prints for `duration_ms`, to let it get on with
+  // things (or to show that it does not).
+  void Pump(int duration_ms) {
+    const Deadline deadline(duration_ms);
+    while (!eof_ && !deadline.Expired()) ReadSome(kStepMs);
+  }
+
   // Waits for the child to exit and returns its exit status, or minus the
   // signal number if a signal killed it. Returns -1000 (after killing the
   // child) on timeout. Collects the remaining output first, so output() is
   // complete afterwards.
   int Wait(int timeout_ms) {
     const Deadline deadline(timeout_ms);
-    int status = 0;
-    for (;;) {
-      const pid_t r = waitpid(pid_, &status, WNOHANG);
-      if (r == pid_) break;
+    while (!reaped_) {
+      const pid_t r = waitpid(pid_, &status_, WNOHANG);
+      if (r == pid_) {
+        reaped_ = true;
+        break;
+      }
       if (r < 0 && errno != EINTR) Die("waitpid failed");
       if (deadline.Expired()) {
         kill(pid_, SIGKILL);
-        waitpid(pid_, &status, 0);
+        waitpid(pid_, &status_, 0);
         pid_ = -1;
         return -1000;
       }
@@ -125,7 +168,7 @@ class PtyChild {
     }
     pid_ = -1;
     while (!eof_) ReadSome(kStepMs);
-    const int result = WIFEXITED(status) ? WEXITSTATUS(status) : -WTERMSIG(status);
+    const int result = WIFEXITED(status_) ? WEXITSTATUS(status_) : -WTERMSIG(status_);
     // The status identifies a failed check in the child; it is never a secret.
     if (result != 0) std::fprintf(stderr, "pty harness: child ended with status %d\n", result);
     return result;
@@ -150,6 +193,35 @@ class PtyChild {
    private:
     std::chrono::steady_clock::time_point end_;
   };
+
+  // The common part of Start() and StartExec(): the pty, the fork and the
+  // child's setup. `body` runs in the child once its terminal is in place.
+  template <typename Body>
+  static PtyChild Spawn(bool controlling_tty, Body body) {
+    // O_NOCTTY: the test process itself must never acquire this terminal.
+    const int master = posix_openpt(O_RDWR | O_NOCTTY);
+    if (master < 0) Die("posix_openpt failed (no pty available)");
+    char slave_name[128];
+    if (grantpt(master) != 0 || unlockpt(master) != 0 ||
+        ptsname_r(master, slave_name, sizeof slave_name) != 0) {
+      Die("cannot set up the pty");
+    }
+
+    const pid_t pid = fork();
+    if (pid < 0) Die("fork failed");
+    if (pid == 0) {
+      if (close(master) != 0) _exit(120);
+      if (setsid() < 0) _exit(121);
+      // Without O_NOCTTY a session leader would acquire the terminal on open.
+      const int slave = open(slave_name, O_RDWR | O_NOCTTY);
+      if (slave < 0) _exit(122);
+      if (controlling_tty && ioctl(slave, TIOCSCTTY, 0) != 0) _exit(123);
+      if (dup2(slave, 0) < 0 || dup2(slave, 1) < 0 || dup2(slave, 2) < 0) _exit(124);
+      if (slave > 2 && close(slave) != 0) _exit(125);
+      _exit(body());  // _exit: no atexit handlers, no sanitizer leak check.
+    }
+    return PtyChild(master, pid);
+  }
 
   PtyChild(int master, pid_t pid) : master_(master), pid_(pid) {}
 
@@ -184,6 +256,8 @@ class PtyChild {
   int master_;
   pid_t pid_;
   bool eof_ = false;
+  bool reaped_ = false;  // waitpid() has returned the exit status.
+  int status_ = 0;
   std::string output_;
 };
 
