@@ -4,6 +4,7 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <utility>
 
 namespace nilkey {
@@ -118,6 +119,19 @@ ScopedWriteGuard::~ScopedWriteGuard() {
 std::span<std::byte> ScopedWriteGuard::bytes() const {
   if (buffer_->data_ == nullptr) return {};
   return {static_cast<std::byte*>(buffer_->data_), buffer_->size_};
+}
+
+Result<SecureBuffer> CopyToSecureBuffer(std::span<const std::byte> source, MemlockPolicy policy) {
+  Result<SecureBuffer> made = SecureBuffer::Create(source.size(), policy);
+  if (!made.ok()) return made;
+  if (source.empty()) return made;
+  {
+    // The guard must be closed before the buffer is moved out.
+    Result<ScopedWriteGuard> guard = ScopedWriteGuard::Open(made.value());
+    if (!guard.ok()) return guard.error();
+    std::memcpy(guard.value().bytes().data(), source.data(), source.size());
+  }
+  return made;
 }
 
 }  // namespace nilkey
