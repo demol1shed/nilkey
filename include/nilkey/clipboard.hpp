@@ -49,7 +49,10 @@ struct ClipboardEnv {
 
 // What the cleaner remembers about the copied text: a BLAKE2b-256 digest and
 // the length, never the text itself (SPEC.md 9.3). The digest of a password is
-// still treated as secret: it is not printed or logged and is zeroed when done.
+// still treated as secret: it is not printed or logged, and `get` zeroes its own
+// copies once the cleaner is running. The cleaner has to keep its copy for the
+// whole wait (it is an unsalted hash, so it allows guessing a weak password
+// offline); it locks that memory so that it stays out of swap.
 struct ClipboardFingerprint {
   std::array<unsigned char, 32> digest;
   std::size_t length;
@@ -57,8 +60,11 @@ struct ClipboardFingerprint {
 
 [[nodiscard]] Result<ClipboardFingerprint> FingerprintOf(std::span<const std::byte> text);
 
-// Puts `text` on the clipboard through the tool's stdin: no shell, no argument
-// and no temporary file ever holds it. The tool's own output is discarded, so
+// Puts `text` on the clipboard through the tool's stdin: nilkey uses no shell,
+// no argument and no temporary file for it. What a tool does with the text it
+// is given is its own business: xclip and xsel keep it in memory to serve it,
+// and wl-copy may buffer text read from stdin in a file under $XDG_RUNTIME_DIR
+// (not checked against a real wl-copy). The tool's own output is discarded, so
 // nothing it prints can leak. kClipboardFailed if it cannot be started, exits
 // with an error, or does not finish within a few seconds (then it is killed).
 [[nodiscard]] Status CopyToClipboard(const ClipboardTool& tool, std::span<const std::byte> text);
@@ -89,8 +95,9 @@ struct ClipboardFingerprint {
 // Nothing may fork while a VaultLock is held (the child would keep the lock).
 //
 // kIoError if the process cannot be created; kClipboardFailed if it did not
-// report that it was running (it is then killed, and the caller must clear the
-// clipboard itself).
+// report that it was running, which includes not being able to lock its copy of
+// the fingerprint under MemlockPolicy::kRequire (it is then killed, and the
+// caller must clear the clipboard itself).
 [[nodiscard]] Status StartCleaner(const ClipboardTool& tool,
                                   const ClipboardFingerprint& fingerprint, unsigned seconds,
                                   MemlockPolicy policy);
