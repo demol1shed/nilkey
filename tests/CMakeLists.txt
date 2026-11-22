@@ -52,6 +52,13 @@ add_dependencies(test_cli_e2e nilkey_e2e)
 target_compile_definitions(test_cli_e2e PRIVATE NILKEY_E2E_BINARY="$<TARGET_FILE:nilkey_e2e>")
 set_tests_properties(test_cli_e2e PROPERTIES TIMEOUT 180)
 
+# update, delete and passwd, the same way (and the same helpers).
+nilkey_add_test(test_cli_mutations_e2e nilkey_core_test)
+add_dependencies(test_cli_mutations_e2e nilkey_e2e)
+target_compile_definitions(test_cli_mutations_e2e PRIVATE
+                           NILKEY_E2E_BINARY="$<TARGET_FILE:nilkey_e2e>")
+set_tests_properties(test_cli_mutations_e2e PROPERTIES TIMEOUT 180)
+
 # The shipped binary with the production KDF costs. Skip with `ctest -LE slow`.
 nilkey_add_test(test_cli_smoke)
 add_dependencies(test_cli_smoke nilkey)
