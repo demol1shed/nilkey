@@ -64,6 +64,7 @@ set(NILKEY_CORE_SOURCES
   src/commands.cpp
   src/crypto.cpp
   src/display.cpp
+  src/doctor.cpp
   src/fd_io.cpp
   src/hardening.cpp
   src/passgen.cpp
