@@ -12,6 +12,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -57,6 +58,7 @@ struct Run {
 struct CliEnv {
   std::vector<std::string> unset;
   std::vector<std::pair<std::string, std::string>> set;
+  std::optional<rlim_t> memlock_kib;  // RLIMIT_MEMLOCK, soft and hard, in KiB.
 };
 
 inline PtyChild StartCli(const TempDir& dir, const std::string& vault, const std::vector<std::string>& args,
@@ -70,6 +72,7 @@ inline PtyChild StartCli(const TempDir& dir, const std::string& vault, const std
   if (env != nullptr) {
     options.env_unset = env->unset;
     options.env_set = env->set;
+    options.memlock_kib = env->memlock_kib;
   }
   return PtyChild::StartExec(NILKEY_E2E_BINARY, full, options);
 }

@@ -23,6 +23,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -45,6 +46,11 @@ class PtyChild {
     const char* stdin_path = nullptr;   // A file to read as stdin, instead of the terminal.
     const char* stdout_path = nullptr;  // A file (mode 0600) that receives stdout.
     bool no_memlock = false;            // RLIMIT_MEMLOCK of 0: locking memory fails.
+    // RLIMIT_MEMLOCK (soft and hard) in KiB, for a test that must not depend on
+    // the limit it inherits. Only lowering is possible without privilege, so a
+    // value above the inherited hard limit makes the program fail to start
+    // (status 127) instead of silently running with another limit.
+    std::optional<rlim_t> memlock_kib;
     // Changes to the program's environment, applied in this order: the names
     // in env_unset are removed, then each pair in env_set is set.
     std::vector<std::string> env_unset;
@@ -73,9 +79,10 @@ class PtyChild {
         const int out = open(options.stdout_path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
         if (out < 0 || dup2(out, 1) < 0) return 127;
       }
-      if (options.no_memlock) {
-        const struct rlimit none = {0, 0};
-        if (setrlimit(RLIMIT_MEMLOCK, &none) != 0) return 127;
+      if (options.no_memlock || options.memlock_kib.has_value()) {
+        const rlim_t bytes = options.memlock_kib.has_value() ? *options.memlock_kib * 1024 : 0;
+        const struct rlimit limit = {bytes, bytes};
+        if (setrlimit(RLIMIT_MEMLOCK, &limit) != 0) return 127;
       }
       for (const std::string& name : options.env_unset) {
         if (unsetenv(name.c_str()) != 0) return 127;
