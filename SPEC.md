@@ -280,6 +280,72 @@ Kasa dosyası her zaman `0600` (yalnızca sahip okuma/yazma) izinleriyle tutulur
   * Alt sürece açık şifre aktarılmaz; yalnızca kopyalanan şifrenin `BLAKE2b` (`crypto_generichash`) özeti aktarılır.
   * Süre dolduğunda panodaki güncel verinin özeti hesaplanır ve `sodium_memcmp` ile karşılaştırılır; yalnızca hala aynı şifre duruyorsa pano temizlenir.
 
+### 9.4 Faz 4 Uygulama Kararları ve Bilinen Sınırlamalar
+
+**Uygulama kararları** (`include/nilkey/commands.hpp`, `terminal.hpp`, `store.hpp`, `clipboard.hpp`, `doctor.hpp`):
+
+*Komutlar ve akış*
+* **Sıra:** komut satırı doğrulanır → parola gerektirmeyen denetimler yapılır (kasa var mı, `--notes-stdin`) → tüm istemler sorulur → kilit alınır → değiştirilir → kaydedilir. Böylece kullanıcı yazarken kilit tutulmaz ve hatalı bir komut satırı için kimseye parola yazdırılmaz.
+* **Çıkış kodları:** 0 başarı; 1 komut çalıştı ve başarısız oldu; 2 hatalı komut satırı (iletide `--help`'e yönlendirme); 130 kullanıcı vazgeçti (Ctrl-C, satır başında Ctrl-D).
+* **Parola girişi:** yalnızca `/dev/tty` (stdin ve stdout'a dokunulmaz), `ECHO` kapalı, en fazla 1024 bayt; boş satır `kEmptyInput` ile reddedilir (§6.4'te CLI'ya bırakılan boş parola kuralı budur). Hiçbir seçenek parola almaz. `--notes-stdin` notları stdin'den okur (en fazla 64 KiB); kayıt parolası iki kez yazılır ya da `--generate` ile üretilir (20 karakter, dört sınıf).
+* **Kilit:** kasayı değiştiren komutlar `<vault>.lock` üzerinde `flock` alır ve oku-değiştir-yaz döngüsünün tamamında tutar (§8'in Faz 2'de ertelenen kilidi). Ana parola kasa açılır açılmaz yok edilir. `list` ve `get` kilitsizdir: kayıt `rename` ile yapıldığından her zaman bütün bir sürüm görürler. Kilit tutulurken hiçbir şey `fork` etmez (çocuk kilidi miras alırdı).
+* **`delete`:** onay, ana parola isteminden **önce** sorulur (parolayı yazıp vazgeçen olmasın); soruda kayıt adı yoktur (komut satırından gelen metin denetimsiz terminale çıkmasın); "hayır" `kNotConfirmed` ile çıkış 1 verir; `--yes` soruyu atlar.
+* **`passwd`:** yeni anahtar, mevcut parola kasayı açtıktan **sonra** ve kilit altında türetilir (yanlış parola bir anahtar türetmeye mal olur, iki değil); yeni salt ve yeni nonce (§10 madde 4).
+* **`update`:** dokunulmayan alanlar kasa tamponundan yeni yüke doğrudan taşınır, gizli bir kopya çıkarılmaz (`Vault::Patch`).
+* **`generate`:** sabit 88 karakterlik alfabe (26 küçük, 26 büyük, 10 rakam, 26 sembol: `!@#$%^&*()-_=+[]{};:,.<>/?`), `randombytes_uniform`; uzunluk 8..1024 (varsayılan 20), sınıflar `--no-lower`, `--no-upper`, `--no-digits`, `--no-symbols` ile kapatılır; hiçbir sınıf kalmazsa kullanım hatası.
+* **Çıktı güvenliği:** hata iletileri statik metindir, kullanıcı girdisi yankılanmaz. Komut satırından ya da kasadan gelen ad ve metinler yalnızca `WritePrintable` ile (denetim karakterleri `?` olur) terminale yazılır. Sırlar stdio tamponundan geçmez, doğrudan dosya tanımlayıcısına yazılır; çıktı bir terminal değilse sona satır sonu eklenmez (`nilkey generate | xclip` panoya `\n` koymaz).
+* **Bellek uyarısı:** `--allow-unlocked-memory` ile kilitlenemeyen bellek uyarısı süreç başına bir kez yazılır.
+
+*`get` ve pano*
+* **Seçenekler:** `--field password|username|url|notes` (varsayılan `password`), `--print`, `--timeout <sn>` (1..3600, varsayılan 15). `--print` ile `--timeout` birlikte kullanım hatasıdır. Boş alan panoya `kFieldEmpty` ile reddedilir (pano dokunulmaz); `--print` ile boş çıktı ve çıkış 0 verir. Değer kasa tamponundan doğrudan araca ya da çıktıya yazılır, ara kopya çıkarılmaz.
+* **Araç tespiti (§9.3):** `WAYLAND_DISPLAY` doluysa `wl-copy` **ve** `wl-paste`; aksi halde `DISPLAY` doluysa `xclip`, ardından `xsel` (her zaman `--clipboard`; yoksa PRIMARY kullanılırdı). Aileler arası geri düşme yoktur: Wayland oturumunda `wl-clipboard` yoksa XWayland'e sessizce geçilmez, `kNoClipboardTool` döner; kullanıcı `--print`'i kendisi seçer. Araç yalnızca `PATH`'in **mutlak** girdilerinde aranır (göreli ya da boş girdi, geçerli dizinden çalıştırmayı önlemek için yok sayılır). Araç, ana parola istenmeden **önce** bulunur.
+* **Araç çağrısı:** kabuk yok; `posix_spawn` ile mutlak yoldan, ortam (`DISPLAY`, `XAUTHORITY`, `WAYLAND_DISPLAY`, `XDG_RUNTIME_DIR`) aktarılarak; değer aracın stdin'ine yazılır (argüman ya da geçici dosya yok), aracın stdout/stderr'i `/dev/null`'dır. Yazma ve bekleme birlikte 5 saniyeyle sınırlıdır; takılan araç öldürülür. Okumayan araç `SIGPIPE` yoluyla süreci öldüremez (`SIGPIPE` yazma süresince yok sayılır).
+* **Temizleyici süreç:** kasa tamponları ve anahtar yok edildikten, yığın `sodium_stackzero` ile sıfırlandıktan ve `fflush`'tan sonra `fork` edilir; çocuğa yalnızca düz veri (araç, BLAKE2b özeti ve uzunluk, süre) geçer. Çocuk yeni bir oturum açar (`setsid`), `SIGHUP`/`SIGINT`/`SIGQUIT`/`SIGTSTP` yok sayar, standart akışları `/dev/null`'a bağlar ve diğer tanımlayıcıları kapatır. Ebeveyn `fork` öncesi `SIGHUP`'ı bloklar (çocuk kendi oturumuna geçene kadar eski süreç grubundadır) ve çocuğun "hazırım" baytını (en fazla 2 sn) görmeden "N saniye sonra temizlenir" demez; çocuk başlamazsa ebeveyn panoyu hemen kendisi temizler ve hata verir.
+* **Temizleme kararı:** süre `CLOCK_BOOTTIME` ile ölçülür (makine askıdayken de akar). Süre dolunca pano geri okunur (en fazla kopyalanan uzunluk kadar), uzunluk ve özet `sodium_memcmp` ile karşılaştırılır; yalnızca ikisi de eşitse temizlenir. Farklı içerik ya da okunamayan pano dokunulmadan bırakılır. Çocuk özet sayfasını `mlock` ile kilitler; kilitlenemezse (`kRequire`) hiç başlamaz.
+* **xclip ile temizleme:** xclip'in temizleme seçeneği yoktur; boş stdin ile `xclip -selection clipboard -in` seçimi devralır ve eski sahibi çıkarır (gerçek xclip'te doğrulandı). `xsel` için `--clipboard --clear`, Wayland için `wl-copy --clear` kullanılır.
+
+*`doctor`*
+* Her kontrol bir satırdır: `ok`, `note` (bu makineye özgü bilgi) ya da `problem` (nilkey'in dayandığı bir varsayımı bozar). Çıkış kodu yalnızca `problem` varsa 1'dir. Parola istemez, `SecureBuffer` ayırmaz, kilit almaz, dosya yazmaz.
+* Kontroller: kasa ve `.lock` dosyasının modu (tam `0600`), sahibi ve sembolik bağ olmaması; üst dizinin sahibi ve modu (grup/diğer yazabiliyorsa `problem`, yalnızca okuyabiliyorsa `note`); `RLIMIT_MEMLOCK`; `PR_GET_DUMPABLE` ve `RLIMIT_CORE`; `/proc/swaps`; pano aracı.
+* `RLIMIT_MEMLOCK` iki satırdır ve §7.3'ün ayrımını izler: kasa için gereken kilitli bellek (yükün iki katı, sayfalara yuvarlanmış, artı 256 KiB) sığmıyorsa `problem` (nilkey reddeder); Argon2id çalışma belleği sığmıyorsa `note` (nilkey yalnızca uyarır). Kasa başlığı parolasız okunur.
+
+**Bilinen sınırlamalar:**
+* **Pano:**
+  * Wayland (`wl-clipboard`) ve `xsel` yolları gerçek araçla doğrulanmadı; geliştirme makinesinde yalnızca X11 ve `xclip` vardı. Yalnızca argüman kalıpları sahte araçla sınandı. `wl-copy`'nin stdin'den okurken `$XDG_RUNTIME_DIR` altında geçici dosya kullanıp kullanmadığı ve `xsel --output`'un sona satır sonu ekleyip eklemediği bilinmiyor; ekliyorsa temizleyici özeti eşleştiremez ve panoyu hiç silmez.
+  * Masaüstü pano geçmişi yöneticileri kopyayı tutabilir; gerçek bir masaüstünde pano seçimini hemen devraldı. nilkey yalnızca seçimi temizler.
+  * Pano aracının kendi süreç belleği `mlock`'suzdur ve sıfırlanmaz.
+  * Temizleyici `SIGKILL` ya da oturum kapanışıyla ölürse pano temizlenmez.
+  * Yalnızca CLIPBOARD seçimi kullanılır, PRIMARY değil. Seçilen alan (kullanıcı adı, URL, notlar) aynı süre ve aynı yolla işlenir.
+  * Temizleyici özeti bekleme boyunca bellekte tutar (imzasız BLAKE2b; zayıf bir parola çevrimdışı tahmin edilebilir). Özetin sayfası kilitlidir ama çocuğun ebeveynden miras aldığı öteki sayfalar değildir.
+  * Araç ve hazır borusu zaman aşımları `CLOCK_MONOTONIC` kullanır; makine askıdayken uzar. Kullanıcıya verilen süre sözü `CLOCK_BOOTTIME` ile tutulur.
+  * `get --print` kayıt adı dışındaki alanları (parola, kullanıcı adı, URL, notlar) terminale ham bayt olarak yazar; kaçış dizisi taşıyan bir alan terminali etkileyebilir. Boru ve dosyada tam değerin korunması için bu bilinçli bırakıldı; alan yalnızca kasa sahibinin kendi verisidir.
+* **Komutlar:**
+  * `add`, `update` ve `passwd`'de yanlış ana parola, kayıt ya da yeni parola yazıldıktan **sonra** anlaşılır; `update`'te yanlış kayıt adı ana parola doğrulandıktan sonra. Tüm istemler kilit alınmadan önce bitirildiğinden (kullanıcı yazarken kilit tutulmaz) doğrulama istemlerden sonraya kalır.
+  * `passwd` yeni anahtarı kilit tutarken türetir; bu sırada öteki yazarlar bekler.
+  * Reddedilen `delete` çıkış 1 verir (betiklerde "başarısız" ile "vazgeçti" ayrılmaz).
+  * Silinen ya da değiştirilen kaydın eski şifreli sürümleri yedeklerde ve disk artıklarında kalabilir.
+  * `<vault>.lock` dosyası dizinde kalır (silmek yarışı yeniden açardı). Bazı ağ dosya sistemlerinde `flock` zayıftır.
+  * Kayıt adlarında Unicode normalizasyonu yoktur (§6.4).
+* **Terminal:** `SIGKILL` ve çökmede terminal ayarları geri yüklenmez; `ECHO` kapalı kalırsa `stty sane`.
+* **`doctor`:** swap'ın şifreli olup olmadığına ve hibernasyon yapılandırmasına bakılmaz, yalnızca etkin swap alanı sayılır; `ptrace_scope` ve `core_pattern` raporlanmaz; yalnızca kasanın doğrudan üst dizini denetlenir; pano satırı aracın kurulu olduğunu gösterir, çalıştığını değil; kilitli bellek ihtiyacı bir tahmindir ve yalnızca bu sürecin sınırına bakar.
+
+**Teste dayanmayanlar** (tasarıma ve incelemeye dayanır):
+* Temizleyici sürecin belleğinde parola bulunmaması: `dumpable=0` yüzünden `/proc/<pid>/mem` okunamaz. Güvence yapıdadır (`StartCleaner` yalnızca düz veri alır, çağıran kapsam daha önce bitmiştir).
+* `fork` öncesi `fflush` ve `sodium_stackzero`'nun etkisi, hata yollarındaki `sodium_stackzero` ve özet kopyalarının silinmesi: bellek içeriği dışarıdan gözlenemez.
+* `SIGHUP` maskesi: hazır borusu ebeveynin pencere içinde çıkmasını zaten engellediğinden testle ayırt edilemez.
+* `fork` hatası ve hazır borusu zaman aşımı yolları (güvenilir biçimde tetiklenemez), makinenin askıya girmesi (`CLOCK_BOOTTIME`).
+* `doctor`'ın sertleştirme `problem` dalı (ikili her zaman kendini sertleştirir) ve `/proc/swaps` okunamadığı dal.
+* Çocuğun `mlock` kontrolü (`VmLck`) ve tek uyarı testi yalnızca sanitizer'sız derlemede çalışır; ASan/UBSan `mlock()`'u yakalayıp başarı döndürür (§7.4).
+
+**Test altyapısı:** sözde terminalli (pty) bir koşum düzeneği, gerçek bir ekran ve pano yerine sahte `xclip` betiği, ucuz Argon2id maliyetli `nilkey_e2e` ikilisi (üretim ikilisi bu makroyu hiç tanımlamaz) ve üretim maliyetleriyle koşan, `slow` etiketli bir duman testi. Mutasyon doğrulaması elle yapıldı; CI'da koşmaz.
+
+**Dış inceleme (2026-11-22):** tüm `src` ve `include` üzerinde bir model incelemesi (`/code-review high`) yapıldı; bellek güvenliği, kripto ya da dosya formatı hatası bulmadı. Sekiz bulgu şöyle sonuçlandı:
+* *Kodda düzeltildi:* temizleyicinin askıdaki süreyi saymaması; panoya yazmanın zaman aşımına bağlanmaması; başarısız anahtar türetme ve şifre çözme yollarında `sodium_stackzero` eksikliği; bellek kilidi uyarısının tekrarlanması; `doctor`'ın `/proc/swaps`'ı en fazla 8 KiB okuması (bulgu "kısa okuma" demişti, oysa `fread` döngüler; asıl hata 8 KiB sınırıydı).
+* *Kısmen düzeltildi:* özet kopyaları (çocuktaki kopya kilitli, ama miras kalan sayfalar değil).
+* *Yalnızca belge düzeltildi, davranış aynı:* `wl-copy`'nin geçici dosya iddiası.
+* *Bilinçli sınır olarak bırakıldı:* `get --print`'in ham yazımı.
+Bu tek bir model incelemesidir; insan ya da ikinci bir araçla yapılmış bağımsız denetimin yerine geçmez.
+
 ---
 
 ## 10. Zorunlu Otomatik Test Matrisi
