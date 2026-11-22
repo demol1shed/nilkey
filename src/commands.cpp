@@ -1,7 +1,12 @@
 #include "nilkey/commands.hpp"
 
 #include <sodium.h>
+#include <sys/prctl.h>
+#include <sys/resource.h>
+#include <sys/stat.h>
 #include <unistd.h>
+
+#include <cerrno>
 
 #include <charconv>
 #include <cstddef>
@@ -15,14 +20,18 @@
 #include <system_error>
 #include <utility>
 
+#include "nilkey/atomic_file.hpp"
 #include "nilkey/clipboard.hpp"
+#include "nilkey/crypto.hpp"
 #include "nilkey/display.hpp"
+#include "nilkey/doctor.hpp"
 #include "nilkey/fd_io.hpp"
 #include "nilkey/passgen.hpp"
 #include "nilkey/store.hpp"
 #include "nilkey/terminal.hpp"
 #include "nilkey/tlv.hpp"
 #include "nilkey/vault.hpp"
+#include "nilkey/vault_format.hpp"
 
 namespace nilkey {
 
@@ -618,6 +627,243 @@ int RunGenerate(const ParsedArgs& request, const Io& io) {
   const Status written = WriteSecretLine(io.out_fd, guard.value().bytes());
   if (!written.ok()) return ReportError(written.error(), io.err);
   return kExitOk;
+}
+
+// ---- doctor (SPEC.md 9.2) ----
+//
+// Every check prints one line, "ok", "note" or "problem" and a label. It asks
+// for no password, allocates no SecureBuffer, takes no lock and writes no file.
+// The rules are in doctor.cpp; what follows gathers the facts.
+
+namespace {
+
+class DoctorReport {
+ public:
+  explicit DoctorReport(std::FILE* out) : out_(out) {}
+
+  // Starts a line; the caller writes the rest with the stream from out().
+  std::FILE* Begin(Finding level) {
+    if (level == Finding::kProblem) ++problems_;
+    const char* const name = level == Finding::kOk     ? "ok     "
+                             : level == Finding::kNote ? "note   "
+                                                       : "problem";
+    std::fprintf(out_, "%s ", name);
+    return out_;
+  }
+
+  void Line(Finding level, const char* label, const char* text) {
+    std::fprintf(Begin(level), "%s: %s\n", label, text);
+  }
+
+  std::FILE* out() const { return out_; }
+  bool HasProblem() const { return problems_ > 0; }
+
+ private:
+  std::FILE* out_;
+  unsigned problems_ = 0;
+};
+
+// The mode, the owner and the kind of a vault or lock file. False if there is no
+// such file (nothing is printed then).
+bool CheckPlainFile(DoctorReport& report, const std::string& path, const char* label,
+                    bool* is_regular) {
+  struct stat st;
+  if (lstat(path.c_str(), &st) != 0) {
+    if (errno == ENOENT) return false;
+    report.Line(Finding::kProblem, label, "cannot check it");
+    return true;
+  }
+  if (S_ISLNK(st.st_mode)) {
+    report.Line(Finding::kProblem, label, "is a symbolic link, which nilkey refuses to follow");
+    return true;
+  }
+  if (!S_ISREG(st.st_mode)) {
+    report.Line(Finding::kProblem, label, "is not a regular file");
+    return true;
+  }
+  *is_regular = true;
+  const Check check = ClassifyFileMode(st.st_mode, st.st_uid, geteuid());
+  std::fprintf(report.Begin(check.level), "%s: mode %04o; %s\n", label,
+               static_cast<unsigned>(st.st_mode & 07777), check.text);
+  return true;
+}
+
+void CheckDirectory(DoctorReport& report, const std::string& path) {
+  struct stat st;
+  if (stat(path.c_str(), &st) != 0) {
+    // A missing directory is no finding of its own: the vault is missing too.
+    if (errno != ENOENT) report.Line(Finding::kProblem, "directory", "cannot check it");
+    return;
+  }
+  if (!S_ISDIR(st.st_mode)) {
+    report.Line(Finding::kProblem, "directory", "the vault's parent is not a directory");
+    return;
+  }
+  const Check check = ClassifyDirectoryMode(st.st_mode, st.st_uid, geteuid());
+  std::fprintf(report.Begin(check.level), "directory: mode %04o; %s\n",
+               static_cast<unsigned>(st.st_mode & 07777), check.text);
+}
+
+// The KiB figure of a lock limit, or "unlimited".
+void PrintLimit(std::FILE* out, rlim_t limit) {
+  if (limit == RLIM_INFINITY) {
+    std::fputs("unlimited", out);
+  } else {
+    std::fprintf(out, "%llu KiB", static_cast<unsigned long long>(limit / 1024));
+  }
+}
+
+// The header of the vault at `path`, read without a password. kOk and the
+// header if it is valid; nothing is printed here.
+Result<VaultHeader> ReadHeaderOnly(const std::string& path) {
+  const Result<std::vector<std::byte>> file = ReadVaultFile(path.c_str());
+  if (!file.ok()) return file.error();
+  if (file.value().size() < kHeaderSize) return make_error(ErrorCode::kInvalidFormat);
+  const Result<VaultHeader> header =
+      ParseHeader(std::span<const std::byte>(file.value().data(), kHeaderSize));
+  if (!header.ok()) return header.error();
+  if (const Status s = ValidateFileSize(file.value().size(), header.value()); !s.ok()) {
+    return s.error();
+  }
+  return header.value();
+}
+
+// SPEC.md 7.3: running out of lockable memory for the vault stops nilkey (a
+// problem); too little for the Argon2id working memory only warns at run time,
+// so it is a note here.
+void CheckMemoryLock(DoctorReport& report, const std::optional<VaultHeader>& header) {
+  rlimit limit{};
+  if (getrlimit(RLIMIT_MEMLOCK, &limit) != 0) {
+    report.Line(Finding::kProblem, "memory lock limit", "cannot check it");
+    return;
+  }
+  if (header.has_value()) {
+    const long page = sysconf(_SC_PAGESIZE);
+    const std::uint64_t needed =
+        LockedBytesNeeded(header->payload_len, page > 0 ? static_cast<std::uint64_t>(page) : 4096);
+    const bool fits = limit.rlim_cur == RLIM_INFINITY || limit.rlim_cur >= needed;
+    std::FILE* const out = report.Begin(fits ? Finding::kOk : Finding::kProblem);
+    std::fputs("memory lock limit: ", out);
+    PrintLimit(out, limit.rlim_cur);
+    std::fprintf(out, "; this vault needs about %llu KiB",
+                 static_cast<unsigned long long>((needed + 1023) / 1024));
+    std::fputs(fits ? "\n"
+                    : "; raise `ulimit -l`, or pass --allow-unlocked-memory to run without it\n",
+               out);
+  }
+  const KdfParams kdf = header.has_value() ? header->kdf : kDefaultKdfParams;
+  if (MemlockLimitCoversKdf(kdf)) {
+    std::fprintf(report.Begin(Finding::kOk),
+                 "key derivation memory: the lock limit covers the %u KiB Argon2id uses\n",
+                 kdf.mem_kib);
+  } else {
+    std::fprintf(report.Begin(Finding::kNote),
+                 "key derivation memory: the lock limit is below the %u KiB Argon2id uses; "
+                 "that memory may be written to swap (see `ulimit -l`)\n",
+                 kdf.mem_kib);
+  }
+}
+
+void CheckHardening(DoctorReport& report) {
+  const int dumpable = prctl(PR_GET_DUMPABLE, 0, 0, 0, 0);
+  if (dumpable < 0) {
+    report.Line(Finding::kProblem, "core dumps", "cannot check whether the process is dumpable");
+  } else if (dumpable != 0) {
+    report.Line(Finding::kProblem, "core dumps",
+                "the process is dumpable; its memory could be dumped or traced");
+  } else {
+    report.Line(Finding::kOk, "core dumps", "the process is not dumpable");
+  }
+
+  rlimit core{};
+  if (getrlimit(RLIMIT_CORE, &core) != 0) {
+    report.Line(Finding::kProblem, "core file size", "cannot check it");
+  } else if (core.rlim_cur != 0) {
+    report.Line(Finding::kProblem, "core file size", "the limit is not 0; a crash could write a core file");
+  } else {
+    report.Line(Finding::kOk, "core file size", "the limit is 0");
+  }
+}
+
+void CheckSwap(DoctorReport& report) {
+  std::FILE* const file = std::fopen("/proc/swaps", "re");
+  if (file == nullptr) {
+    report.Line(Finding::kNote, "swap", "cannot read /proc/swaps");
+    return;
+  }
+  char text[8192];
+  const std::size_t n = std::fread(text, 1, sizeof text, file);
+  const bool read_failed = std::ferror(file) != 0;
+  if (std::fclose(file) != 0 || read_failed) {
+    report.Line(Finding::kNote, "swap", "cannot read /proc/swaps");
+    return;
+  }
+  const unsigned areas = CountSwapAreas(std::string_view(text, n));
+  if (areas == 0) {
+    report.Line(Finding::kOk, "swap", "no swap area is active");
+    return;
+  }
+  std::fprintf(report.Begin(Finding::kNote),
+               "swap: %u area(s) active; nilkey locks the memory that holds secrets, but "
+               "hibernation writes all memory to disk; use an encrypted swap or no hibernation\n",
+               areas);
+}
+
+void CheckClipboard(DoctorReport& report) {
+  const char* const wayland = std::getenv("WAYLAND_DISPLAY");
+  const bool is_wayland = wayland != nullptr && wayland[0] != '\0';
+  const Result<ClipboardTool> tool =
+      DetectClipboardTool({std::getenv("PATH"), wayland, std::getenv("DISPLAY")});
+  if (!tool.ok()) {
+    report.Line(Finding::kNote, "clipboard",
+                "no tool found; `get` works only with --print (install wl-clipboard, xclip or xsel)");
+    return;
+  }
+  std::FILE* const out = report.Begin(Finding::kOk);
+  std::fprintf(out, "clipboard: %s session, using ", is_wayland ? "Wayland" : "X11");
+  if (const Status s = WritePrintable(out, AsBytes(tool.value().copy_path)); !s.ok()) {
+    std::fputs("?", out);
+  }
+  std::fputs("\n", out);
+}
+
+}  // namespace
+
+int RunDoctor(const ParsedArgs& request, const Io& io) {
+  const Result<std::string> path = VaultPathFor(request);
+  if (!path.ok()) return ReportError(path.error(), io.err);
+
+  DoctorReport report(io.out);
+  std::fputs("vault: ", io.out);
+  if (const Status s = WritePrintable(io.out, AsBytes(path.value())); !s.ok()) {
+    return ReportError(s.error(), io.err);
+  }
+  std::fputs("\n", io.out);
+
+  bool vault_is_regular = false;
+  if (!CheckPlainFile(report, path.value(), "vault file", &vault_is_regular)) {
+    report.Line(Finding::kNote, "vault file", "not found; run `nilkey init` to create it");
+  }
+  bool lock_is_regular = false;  // Only the vault's kind matters further on.
+  static_cast<void>(CheckPlainFile(report, path.value() + ".lock", "lock file", &lock_is_regular));
+  CheckDirectory(report, ParentDirectory(path.value()));
+
+  std::optional<VaultHeader> header;
+  if (vault_is_regular) {
+    const Result<VaultHeader> read = ReadHeaderOnly(path.value());
+    if (read.ok()) {
+      header = read.value();
+    } else {
+      report.Line(Finding::kProblem, "vault header", "is not valid, or the file cannot be read");
+    }
+  }
+  CheckMemoryLock(report, header);
+  CheckHardening(report);
+  CheckSwap(report);
+  CheckClipboard(report);
+
+  if (std::fflush(io.out) != 0) return kExitError;
+  return report.HasProblem() ? kExitError : kExitOk;
 }
 
 }  // namespace nilkey

@@ -33,6 +33,7 @@ int RunUpdate(const ParsedArgs& request, const Io& io);
 int RunDelete(const ParsedArgs& request, const Io& io);
 int RunPasswd(const ParsedArgs& request, const Io& io);
 int RunGenerate(const ParsedArgs& request, const Io& io);
+int RunDoctor(const ParsedArgs& request, const Io& io);
 
 }  // namespace nilkey
 
