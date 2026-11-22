@@ -26,13 +26,11 @@ namespace nilkey {
 
 namespace {
 
-// Writes the password to `fd` and, if `fd` is a terminal, a line break after
-// it. Into a pipe or file the bytes go out exactly as they are, so that
+// Writes the secret to `fd` and, if `fd` is a terminal, a line break after it.
+// Into a pipe or file the bytes go out exactly as they are, so that
 // `nilkey generate | xclip` does not put a newline on the clipboard.
-Status WriteSecretLine(int fd, const SecureBuffer& secret) {
-  const Result<ScopedReadGuard> guard = ScopedReadGuard::Open(secret);
-  if (!guard.ok()) return guard.error();
-  if (const Status s = WriteAll(fd, guard.value().bytes()); !s.ok()) return s;
+Status WriteSecretLine(int fd, std::span<const std::byte> secret) {
+  if (const Status s = WriteAll(fd, secret); !s.ok()) return s;
   if (isatty(fd) == 1) {
     const std::byte newline{'\n'};
     return WriteAll(fd, std::span<const std::byte>(&newline, 1));
@@ -499,7 +497,9 @@ int RunGenerate(const ParsedArgs& request, const Io& io) {
       GeneratePassword(spec.value(), PolicyFor(request.globals));
   if (!password.ok()) return ReportError(password.error(), io.err);
 
-  const Status written = WriteSecretLine(io.out_fd, password.value());
+  const Result<ScopedReadGuard> guard = ScopedReadGuard::Open(password.value());
+  if (!guard.ok()) return ReportError(guard.error(), io.err);
+  const Status written = WriteSecretLine(io.out_fd, guard.value().bytes());
   if (!written.ok()) return ReportError(written.error(), io.err);
   return kExitOk;
 }
