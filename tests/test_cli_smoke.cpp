@@ -109,4 +109,48 @@ NILKEY_TEST(the_real_binary_uses_the_production_costs_and_works) {
   NILKEY_EXPECT(Has(wrong.terminal, "wrong password or corrupted vault file"));
 }
 
+// SPEC.md 10.4 with the shipped binary: a new salt, and the production costs
+// stay in the header (passwd must not fall back to cheap ones).
+NILKEY_TEST(the_real_binary_re_keys_with_the_production_costs) {
+  TempDir dir;
+  NILKEY_EXPECT(dir.ok());
+  const std::string vault = dir.Path("v.vault");
+  const std::string master = "first real master";
+  const std::string next = "second real master";
+
+  NILKEY_EXPECT(RunBinary(dir, vault, {"init"},
+                          {{"New master password: ", master},
+                           {"Repeat the new master password: ", master}})
+                    .status == 0);
+  NILKEY_EXPECT(RunBinary(dir, vault, {"add", "smoke", "--generate"},
+                          {{"Master password: ", master}})
+                    .status == 0);
+  std::vector<std::byte> before;
+  NILKEY_EXPECT(Slurp(vault, before));
+
+  const Result passwd = RunBinary(dir, vault, {"passwd"},
+                                  {{"Current master password: ", master},
+                                   {"New master password: ", next},
+                                   {"Repeat the new master password: ", next}});
+  NILKEY_EXPECT(passwd.status == 0);
+
+  std::vector<std::byte> after;
+  NILKEY_EXPECT(Slurp(vault, after));
+  NILKEY_EXPECT(after.size() > 66 && before.size() > 66);
+  NILKEY_EXPECT(Le32(after, 10) == 65536);
+  NILKEY_EXPECT(Le32(after, 14) == 3);
+  NILKEY_EXPECT(Le32(after, 18) == 1);
+  const auto salt = [](const std::vector<std::byte>& file) {
+    return std::vector<std::byte>(file.begin() + 22, file.begin() + 38);
+  };
+  NILKEY_EXPECT(salt(before) != salt(after));
+
+  const Result old_list = RunBinary(dir, vault, {"list"}, {{"Master password: ", master}});
+  NILKEY_EXPECT(old_list.status == 1);
+  NILKEY_EXPECT(old_list.out.empty());
+  const Result new_list = RunBinary(dir, vault, {"list"}, {{"Master password: ", next}});
+  NILKEY_EXPECT(new_list.status == 0);
+  NILKEY_EXPECT(new_list.out.rfind("smoke\t", 0) == 0);
+}
+
 NILKEY_TEST_MAIN()
