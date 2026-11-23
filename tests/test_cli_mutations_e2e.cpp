@@ -295,6 +295,15 @@ NILKEY_TEST(update_refuses_bad_command_lines_before_any_prompt) {
       {"alpha", "--url", "\xC3"},
       {"", "--username", "x"},                                  // empty name
       {"\xFF", "--username", "x"},
+      {"alpha", "--rename", "a\x1b[31mb"},                      // control characters
+      {"alpha", "--rename", "a\tb"},
+      {"alpha", "--rename", "a\nb"},
+      {"alpha", "--rename", "a\xC2\x85" "b"},                    // C1 control
+      {"alpha", "--rename", "a\xE2\x80\xAE" "b"},               // U+202E
+      {"alpha", "--username", "a\x1b[2Jb"},
+      {"alpha", "--username", "a\tb"},
+      {"alpha", "--url", "http://x/\n"},
+      {"alpha", "--url", "a\xE2\x80\xAE" "b"},
   };
   for (const std::vector<std::string>& options : bad) {
     const Run run = Update(dir, vault, options, {});
@@ -302,6 +311,54 @@ NILKEY_TEST(update_refuses_bad_command_lines_before_any_prompt) {
     NILKEY_EXPECT(!Has(run.terminal, kMasterPrompt));
   }
   NILKEY_EXPECT(SameBytes(ReadFile(vault), before));
+}
+
+NILKEY_TEST(update_names_the_option_that_holds_a_control_character) {
+  TempDir dir;
+  NILKEY_EXPECT(dir.ok());
+  const std::string vault = dir.Path("v.vault");
+  NILKEY_EXPECT(Seed(dir, vault, "master pass m6"));
+
+  const struct {
+    std::vector<std::string> options;
+    const char* message;
+  } cases[] = {
+      {{"alpha", "--rename", "a\x1b" "b"}, "--rename must not contain control characters"},
+      {{"alpha", "--username", "a\tb"}, "--username must not contain control characters"},
+      {{"alpha", "--url", "a\nb"}, "--url must not contain control characters"},
+  };
+  for (const auto& c : cases) {
+    const Run run = Update(dir, vault, c.options, {});
+    NILKEY_EXPECT(run.status == 2);
+    NILKEY_EXPECT(Has(run.terminal, c.message));
+  }
+}
+
+// A record that an older version or another writer made, with a control
+// character in its name, can still be found, changed, renamed and deleted: only
+// text that is being written is checked.
+NILKEY_TEST(a_record_with_a_control_character_in_its_name_can_still_be_changed_and_removed) {
+  TempDir dir;
+  NILKEY_EXPECT(dir.ok());
+  const std::string vault = dir.Path("v.vault");
+  const std::string master = "master pass m7";
+  NILKEY_EXPECT(Seed(dir, vault, master));
+  const std::string legacy = "old\x1b[31m name";
+  NILKEY_EXPECT(SeedRecord(vault, master, legacy, "", "pw-old", ""));
+
+  const Run changed = Update(dir, vault, {legacy, "--username", "carol"}, {{kMasterPrompt, master}});
+  NILKEY_EXPECT(changed.status == 0);
+  NILKEY_EXPECT(Lookup(vault, master, legacy).username == "carol");
+
+  const Run renamed = Update(dir, vault, {legacy, "--rename", "old name"}, {{kMasterPrompt, master}});
+  NILKEY_EXPECT(renamed.status == 0);
+  NILKEY_EXPECT(!Lookup(vault, master, legacy).found);
+  NILKEY_EXPECT(Lookup(vault, master, "old name").found);
+
+  NILKEY_EXPECT(SeedRecord(vault, master, "other\tname", "", "pw-other", ""));
+  const Run removed = Delete(dir, vault, {"other\tname", "--yes"}, {{kMasterPrompt, master}});
+  NILKEY_EXPECT(removed.status == 0);
+  NILKEY_EXPECT(!Lookup(vault, master, "other\tname").found);
 }
 
 NILKEY_TEST(update_reports_a_missing_record_and_a_wrong_master_password) {
