@@ -213,6 +213,14 @@ NILKEY_TEST(a_wrong_master_password_shows_nothing_and_changes_nothing) {
   NILKEY_EXPECT(add.status == 1);
   NILKEY_EXPECT(Has(add.terminal, "wrong password or corrupted vault file"));
   NILKEY_EXPECT(SameBytes(ReadFile(vault), before));
+
+  // Typing the record password is not requested: the master is checked first.
+  const Run typed = RunCli(dir, vault, {"add", "y"}, {{kMasterPrompt, "not the master"}});
+  NILKEY_EXPECT(typed.answered);
+  NILKEY_EXPECT(typed.status == 1);
+  NILKEY_EXPECT(Has(typed.terminal, "wrong password or corrupted vault file"));
+  NILKEY_EXPECT(!Has(typed.terminal, kRecordPrompt));
+  NILKEY_EXPECT(SameBytes(ReadFile(vault), before));
 }
 
 NILKEY_TEST(a_missing_vault_is_reported_before_any_prompt) {
