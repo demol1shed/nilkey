@@ -276,6 +276,15 @@ NILKEY_TEST(bad_arguments_are_refused_before_any_prompt_and_change_nothing) {
       {"add", "\xFF"},                            // not UTF-8
       {"add", "n", "--username", "\xFF"},
       {"add", "n", "--url", "\xC3"},
+      {"add", "\x1b[31mred"},                      // control characters
+      {"add", "a\tb"},
+      {"add", "a\nb"},
+      {"add", "a\xC2\x85" "b"},                     // C1 control
+      {"add", "a\xE2\x80\xAE" "b"},                // U+202E
+      {"add", "n", "--username", "a\x1b[2Jb"},
+      {"add", "n", "--username", "a\tb"},
+      {"add", "n", "--url", "http://x/\n"},
+      {"add", "n", "--url", "a\xE2\x80\xAE" "b"},
   };
   for (const std::vector<std::string>& args : bad) {
     const Run run = RunCli(dir, vault, args, {});
@@ -283,6 +292,45 @@ NILKEY_TEST(bad_arguments_are_refused_before_any_prompt_and_change_nothing) {
     NILKEY_EXPECT(!Has(run.terminal, kMasterPrompt));
   }
   NILKEY_EXPECT(SameBytes(ReadFile(vault), before));
+}
+
+NILKEY_TEST(control_characters_are_refused_with_a_message_naming_the_option) {
+  TempDir dir;
+  NILKEY_EXPECT(dir.ok());
+  const std::string vault = dir.Path("v.vault");
+  NILKEY_EXPECT(MakeVault(dir, vault, "master pass 7"));
+
+  const struct {
+    std::vector<std::string> args;
+    const char* message;
+  } cases[] = {
+      {{"add", "a\x1b" "b"}, "the name must not contain control characters"},
+      {{"add", "n", "--username", "a\tb"}, "--username must not contain control characters"},
+      {{"add", "n", "--url", "a\nb"}, "--url must not contain control characters"},
+  };
+  for (const auto& c : cases) {
+    const Run run = RunCli(dir, vault, c.args, {});
+    NILKEY_EXPECT(run.status == 2);
+    NILKEY_EXPECT(Has(run.terminal, c.message));
+  }
+}
+
+NILKEY_TEST(notes_may_hold_control_characters_and_text_that_only_looks_unusual_is_accepted) {
+  TempDir dir;
+  NILKEY_EXPECT(dir.ok());
+  const std::string vault = dir.Path("v.vault");
+  const std::string master = "master pass 7";
+  NILKEY_EXPECT(MakeVault(dir, vault, master));
+  const std::string notes_path = dir.Path("notes.txt");
+  NILKEY_EXPECT(WriteFile(notes_path, "line\tone\x1b[0m\nline two\n"));
+  const std::string name = "t\xC3\xBCrk\xC3\xA7" "e \xF0\x9F\x94\x91";  // Turkish letters and an emoji
+  const Run run = RunCli(dir, vault, {"add", name, "--username", "\xC4\xB1\xC5\x9F\xC4\x9F", "--notes-stdin"},
+                         {{kMasterPrompt, master}, {kRecordPrompt, "pw"}, {kRepeatRecordPrompt, "pw"}},
+                         notes_path.c_str());
+  NILKEY_EXPECT(run.status == 0);
+  const Stored stored = Lookup(vault, master, name);
+  NILKEY_EXPECT(stored.found);
+  NILKEY_EXPECT(stored.notes == "line\tone\x1b[0m\nline two\n");
 }
 
 NILKEY_TEST(notes_must_be_utf8_and_at_most_64_kib) {
