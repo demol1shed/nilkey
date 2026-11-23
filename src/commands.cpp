@@ -318,7 +318,8 @@ int RunInit(const ParsedArgs& request, const Io& io) {
   // The master password lives only inside this call.
   const Result<VaultKey> key = [&]() -> Result<VaultKey> {
     Result<SecureBuffer> master =
-        ReadNewSecret("New master password: ", "Repeat the new master password: ", policy);
+        ReadNewSecret("New master password: ", "Repeat the new master password: ", policy,
+                    kMinMasterCharacters);
     if (!master.ok()) return master.error();
     const Result<ScopedReadGuard> guard = ScopedReadGuard::Open(master.value());
     if (!guard.ok()) return guard.error();
@@ -557,7 +558,8 @@ int RunPasswd(const ParsedArgs& request, const Io& io) {
     return ReportError(s.error(), io.err);
   }
   Result<SecureBuffer> typed_next =
-      ReadNewSecret("New master password: ", "Repeat the new master password: ", policy);
+      ReadNewSecret("New master password: ", "Repeat the new master password: ", policy,
+                    kMinMasterCharacters);
   if (!typed_next.ok()) return ReportError(typed_next.error(), io.err);
   std::optional<SecureBuffer> next(std::move(typed_next).value());
 

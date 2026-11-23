@@ -15,6 +15,7 @@
 // have been called first.
 
 #include <cstddef>
+#include <span>
 
 #include "nilkey/result.hpp"
 #include "nilkey/secure_buffer.hpp"
@@ -32,10 +33,20 @@ inline constexpr std::size_t kMaxSecretSize = 1024;
 // kIoError, and the SecureBuffer errors.
 [[nodiscard]] Result<SecureBuffer> ReadSecret(const char* prompt, MemlockPolicy policy);
 
+// Shortest new master password, in characters (not bytes).
+inline constexpr std::size_t kMinMasterCharacters = 12;
+
+// Counts characters in UTF-8 text: every byte that is not a continuation byte
+// (10xxxxxx) counts as one, so each invalid byte counts as one character too.
+[[nodiscard]] std::size_t CountCharacters(std::span<const std::byte> text);
+
 // Reads a secret twice and returns it if both entries are identical
-// (compared in constant time); kInputMismatch otherwise.
+// (compared in constant time); kInputMismatch otherwise. The first entry must
+// have at least min_characters characters, else kMasterTooShort; this is
+// checked before the repeat prompt is shown.
 [[nodiscard]] Result<SecureBuffer> ReadNewSecret(const char* prompt, const char* confirm_prompt,
-                                                 MemlockPolicy policy);
+                                                 MemlockPolicy policy,
+                                                 std::size_t min_characters = 1);
 
 // Asks a yes/no question with echo on. Only "y" and "yes" (any case) are yes;
 // an empty, long or unrecognised answer is no. kNoTerminal and kAborted are

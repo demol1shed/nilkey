@@ -241,10 +241,25 @@ Result<SecureBuffer> ReadSecret(const char* prompt, MemlockPolicy policy) {
   return secret;
 }
 
+std::size_t CountCharacters(std::span<const std::byte> text) {
+  std::size_t count = 0;
+  for (const std::byte b : text) {
+    if ((std::to_integer<unsigned>(b) & 0xC0U) != 0x80U) ++count;
+  }
+  return count;
+}
+
 Result<SecureBuffer> ReadNewSecret(const char* prompt, const char* confirm_prompt,
-                                   MemlockPolicy policy) {
+                                   MemlockPolicy policy, std::size_t min_characters) {
   Result<SecureBuffer> first = ReadSecret(prompt, policy);
   if (!first.ok()) return first;
+  {
+    const Result<ScopedReadGuard> guard = ScopedReadGuard::Open(first.value());
+    if (!guard.ok()) return guard.error();
+    if (CountCharacters(guard.value().bytes()) < min_characters) {
+      return make_error(ErrorCode::kMasterTooShort);
+    }
+  }
   const Result<SecureBuffer> second = ReadSecret(confirm_prompt, policy);
   if (!second.ok()) return second.error();
 
