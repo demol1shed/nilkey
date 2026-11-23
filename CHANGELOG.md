@@ -9,6 +9,15 @@ independent of the version of the program.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A wrong master password is noticed before the record prompts.** `add`,
+  `update` and `passwd` used to ask for the record password (or the new master
+  password) twice and only then say the master password was wrong. They now open
+  the vault right after the master prompt and stop there if it is wrong. The cost
+  is one more key derivation per command. A name that already exists, a missing
+  record and a taken `--rename` target are still reported after the prompts.
+
 ### Changed
 
 - **No control characters in new names and options.** `add` (the name,
