@@ -323,8 +323,10 @@ NILKEY_TEST(list_shows_names_users_and_times_with_controls_defused) {
   const std::string master = "master pass 9";
   NILKEY_EXPECT(MakeVault(dir, vault, master));
   NILKEY_EXPECT(AddRecord(dir, vault, master, "plain", "pw1", {"--username", "alice"}).status == 0);
-  NILKEY_EXPECT(AddRecord(dir, vault, master, "\x1b[31mred", "pw2", {"--username", "bob"}).status == 0);
-  NILKEY_EXPECT(AddRecord(dir, vault, master, "tab\there", "pw3").status == 0);
+  // The CLI refuses such names, so they are written through the library, as an
+  // older version or another writer could have.
+  NILKEY_EXPECT(SeedRecord(vault, master, "\x1b[31mred", "bob", "pw2", ""));
+  NILKEY_EXPECT(SeedRecord(vault, master, "tab\there", "", "pw3", ""));
 
   const Run run = RunCli(dir, vault, {"list"}, {{kMasterPrompt, master}});
   NILKEY_EXPECT(run.status == 0);
@@ -388,7 +390,7 @@ NILKEY_TEST(list_on_a_terminal_lines_up_the_columns) {
   NILKEY_EXPECT(AddRecord(dir, vault, master, "plain", "pw1", {"--username", "alice"}).status == 0);
   NILKEY_EXPECT(AddRecord(dir, vault, master, key_name, "pw2", {"--username", "a-rather-long-user-name"}).status == 0);
   NILKEY_EXPECT(AddRecord(dir, vault, master, turkish, "pw3").status == 0);
-  NILKEY_EXPECT(AddRecord(dir, vault, master, "\x1b[31mred", "pw4", {"--username", "bob"}).status == 0);
+  NILKEY_EXPECT(SeedRecord(vault, master, "\x1b[31mred", "bob", "pw4", ""));  // Refused by the CLI.
 
   CliEnv env;
   env.stdout_on_terminal = true;
