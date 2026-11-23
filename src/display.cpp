@@ -275,6 +275,17 @@ Status WritePrintable(std::FILE* out, std::span<const std::byte> text) {
   return Ok();
 }
 
+// Walks the text with the same NextPiece() as WritePrintable(), so the answer
+// cannot differ from what the screen does.
+bool ShowsAsWritten(std::span<const std::byte> text) {
+  while (!text.empty()) {
+    const Piece piece = NextPiece(text);
+    if (piece.replaced) return false;
+    text = text.subspan(piece.step);
+  }
+  return true;
+}
+
 // Follows WritePrintable() step by step, so that the width is that of what
 // is written: a replaced character is the one '?' written in its place.
 std::size_t PrintableWidth(std::span<const std::byte> text) {
