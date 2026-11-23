@@ -11,6 +11,13 @@ independent of the version of the program.
 
 ### Changed
 
+- **No control characters in new names and options.** `add` (the name,
+  `--username`, `--url`) and `update` (`--rename`, `--username`, `--url`) now
+  refuse text that would not show as written: control characters such as ESC,
+  tab and newline, and direction marks such as U+202E. Before, they were
+  accepted and `list` showed them as `?`. The command fails with exit
+  code 2 before any password is asked. Notes and passwords are not affected, and
+  records that already have such a name can still be found, renamed and deleted.
 - **`list` on a terminal.** When the output goes to a terminal, `list` prints a
   header and lines up the columns: names, user names and times each start at the
   same place, and each column is as wide as its longest entry (measured in
