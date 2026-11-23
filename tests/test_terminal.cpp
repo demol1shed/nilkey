@@ -11,6 +11,7 @@
 
 #include <cstddef>
 #include <cstring>
+#include <span>
 #include <string>
 #include <string_view>
 
@@ -19,6 +20,7 @@
 #include "test_framework.hpp"
 
 using nilkey::Confirm;
+using nilkey::CountCharacters;
 using nilkey::ErrorCode;
 using nilkey::MemlockPolicy;
 using nilkey::ReadNewSecret;
@@ -278,6 +280,20 @@ NILKEY_TEST(new_secret_needs_two_equal_entries) {
   NILKEY_EXPECT(child.WaitFor("n3c> ", kWaitMs));
   child.Send("\n");
   NILKEY_EXPECT(child.Wait(kWaitMs) == 0);
+}
+
+NILKEY_TEST(counts_characters_not_bytes) {
+  const auto count = [](std::string_view text) {
+    return CountCharacters(std::as_bytes(std::span(text.data(), text.size())));
+  };
+  NILKEY_EXPECT(count("") == 0);
+  NILKEY_EXPECT(count("abc") == 3);
+  NILKEY_EXPECT(count("çüğışö") == 6);          // 2 bytes each
+  NILKEY_EXPECT(count("\xE2\x82\xAC") == 1);    // 3-byte euro sign
+  NILKEY_EXPECT(count("\xF0\x9F\x98\x80") == 1);  // 4-byte emoji
+  NILKEY_EXPECT(count(std::string_view("a\0b", 3)) == 3);
+  NILKEY_EXPECT(count("\xFF\xFE") == 2);        // invalid bytes count one each
+  NILKEY_EXPECT(count("\xFF" "abc") == 4);
 }
 
 NILKEY_TEST(fails_without_a_controlling_terminal) {
