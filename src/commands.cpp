@@ -8,6 +8,7 @@
 
 #include <cerrno>
 
+#include <algorithm>
 #include <charconv>
 #include <cstddef>
 #include <cstdint>
@@ -183,6 +184,12 @@ std::string FormatUtc(std::int64_t seconds) {
   return text;
 }
 
+// The headings of the aligned `list`, and the spaces between two columns. A
+// column is never narrower than its heading.
+constexpr std::string_view kNameHeader = "NAME";
+constexpr std::string_view kUserHeader = "USERNAME";
+constexpr std::size_t kColumnGap = 2;
+
 // One line of `list`: name, user name and last change, separated by tabs. Tabs
 // inside the text are replaced, so the columns can be relied on.
 Status WriteListRow(std::FILE* out, const Record& record) {
@@ -194,6 +201,58 @@ Status WriteListRow(std::FILE* out, const Record& record) {
     return make_error(ErrorCode::kIoError);
   }
   return PutChar(out, '\n');
+}
+
+// Writes `count` spaces.
+Status PutSpaces(std::FILE* out, std::size_t count) {
+  for (std::size_t i = 0; i < count; ++i) {
+    if (const Status s = PutChar(out, ' '); !s.ok()) return s;
+  }
+  return Ok();
+}
+
+// Writes `text`, then the spaces that fill the column up to `width` terminal
+// cells, then the gap between columns, so that the next column starts at the
+// same cell in every row. `width` is at least the width of `text` (it is the
+// widest of the column), so the subtraction cannot go below zero.
+Status PutColumn(std::FILE* out, std::span<const std::byte> text, std::size_t width) {
+  if (const Status s = WritePrintable(out, text); !s.ok()) return s;
+  return PutSpaces(out, width - PrintableWidth(text) + kColumnGap);
+}
+
+// `list` on a terminal: a header and one row per record, with the user names
+// and the times each starting at the same cell. Each of the first two columns is
+// as wide as its longest entry, measured in terminal cells. Nothing at all for
+// an empty vault. The widths need a first pass over the records.
+Status WriteAlignedList(std::FILE* out, const VaultReader& reader) {
+  if (reader.size() == 0) return Ok();
+
+  std::size_t name_width = kNameHeader.size();
+  std::size_t user_width = kUserHeader.size();
+  for (std::size_t i = 0; i < reader.size(); ++i) {
+    const Result<Record> record = reader.Get(i);
+    if (!record.ok()) return record.error();
+    name_width = std::max(name_width, PrintableWidth(record.value().name));
+    user_width = std::max(user_width, PrintableWidth(record.value().username));
+  }
+
+  if (std::fputs(kNameHeader.data(), out) == EOF) return make_error(ErrorCode::kIoError);
+  if (const Status s = PutSpaces(out, name_width - kNameHeader.size() + kColumnGap); !s.ok()) return s;
+  if (std::fputs(kUserHeader.data(), out) == EOF) return make_error(ErrorCode::kIoError);
+  if (const Status s = PutSpaces(out, user_width - kUserHeader.size() + kColumnGap); !s.ok()) return s;
+  if (std::fputs("UPDATED\n", out) == EOF) return make_error(ErrorCode::kIoError);
+
+  for (std::size_t i = 0; i < reader.size(); ++i) {
+    const Result<Record> record = reader.Get(i);
+    if (!record.ok()) return record.error();
+    if (const Status s = PutColumn(out, record.value().name, name_width); !s.ok()) return s;
+    if (const Status s = PutColumn(out, record.value().username, user_width); !s.ok()) return s;
+    if (std::fputs(FormatUtc(record.value().updated_at).c_str(), out) == EOF) {
+      return make_error(ErrorCode::kIoError);
+    }
+    if (const Status s = PutChar(out, '\n'); !s.ok()) return s;
+  }
+  return Ok();
 }
 
 }  // namespace
@@ -489,11 +548,19 @@ int RunList(const ParsedArgs& request, const Io& io) {
 
   const Result<VaultReader> reader = loaded.value().vault.Open();
   if (!reader.ok()) return ReportError(reader.error(), io.err);
-  for (std::size_t i = 0; i < reader.value().size(); ++i) {
-    const Result<Record> record = reader.value().Get(i);
-    if (!record.ok()) return ReportError(record.error(), io.err);
-    if (const Status s = WriteListRow(io.out, record.value()); !s.ok()) {
+  // On a terminal the columns are lined up; into a pipe or a file the rows stay
+  // separated by tabs, which a script can split even if a name holds spaces.
+  if (isatty(io.out_fd) == 1) {
+    if (const Status s = WriteAlignedList(io.out, reader.value()); !s.ok()) {
       return ReportError(s.error(), io.err);
+    }
+  } else {
+    for (std::size_t i = 0; i < reader.value().size(); ++i) {
+      const Result<Record> record = reader.value().Get(i);
+      if (!record.ok()) return ReportError(record.error(), io.err);
+      if (const Status s = WriteListRow(io.out, record.value()); !s.ok()) {
+        return ReportError(s.error(), io.err);
+      }
     }
   }
   if (std::fflush(io.out) != 0) return ReportError(make_error(ErrorCode::kIoError), io.err);
