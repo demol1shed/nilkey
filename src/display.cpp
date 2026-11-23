@@ -52,32 +52,43 @@ Status Put(std::FILE* out, std::span<const std::byte> bytes) {
   return Ok();
 }
 
-}  // namespace
+// The first character of `text` as it is shown: the bytes to write (the
+// character itself, or one '?' if it is replaced), how many input bytes it
+// used, and its code point. One byte that is not valid UTF-8 counts as one
+// replaced character; `code` is 0 for it and for a replaced ASCII character.
+struct Piece {
+  std::span<const std::byte> shown;
+  std::size_t step;
+  std::uint32_t code;
+  bool replaced;
+};
 
-Status WritePrintable(std::FILE* out, std::span<const std::byte> text) {
+Piece NextPiece(std::span<const std::byte> text) {
   static constexpr std::byte kPlaceholder{'?'};
   const std::span<const std::byte> placeholder(&kPlaceholder, 1);
 
-  std::size_t i = 0;
-  while (i < text.size()) {
-    const auto c = static_cast<std::uint8_t>(text[i]);
-    std::span<const std::byte> piece = text.subspan(i, 1);
-    bool show = false;
-    std::size_t step = 1;
+  const auto c = static_cast<std::uint8_t>(text[0]);
+  if (c < 0x80) {
+    const bool show = c >= 0x20 && c != 0x7F;
+    return {show ? text.first(1) : placeholder, 1, show ? c : 0U, !show};
+  }
+  const std::size_t length = SequenceLength(c);
+  if (length != 0 && text.size() >= length && IsValidUtf8(text.first(length))) {
+    const std::span<const std::byte> character = text.first(length);
+    const std::uint32_t code = Decode(character);
+    const bool replaced = ActsOnTheTerminal(code);
+    return {replaced ? placeholder : character, length, replaced ? 0U : code, replaced};
+  }
+  return {placeholder, 1, 0, true};
+}
 
-    if (c < 0x80) {
-      show = c >= 0x20 && c != 0x7F;
-    } else {
-      const std::size_t length = SequenceLength(c);
-      if (length != 0 && text.size() - i >= length && IsValidUtf8(text.subspan(i, length))) {
-        piece = text.subspan(i, length);
-        step = length;
-        show = !ActsOnTheTerminal(Decode(piece));
-      }
-    }
+}  // namespace
 
-    if (const Status s = Put(out, show ? piece : placeholder); !s.ok()) return s;
-    i += step;
+Status WritePrintable(std::FILE* out, std::span<const std::byte> text) {
+  while (!text.empty()) {
+    const Piece piece = NextPiece(text);
+    if (const Status s = Put(out, piece.shown); !s.ok()) return s;
+    text = text.subspan(piece.step);
   }
   return Ok();
 }
