@@ -74,7 +74,7 @@ NILKEY_TEST(init_rejects_two_different_or_an_empty_password) {
   const std::string vault = dir.Path("v.vault");
 
   const Run differ = RunCli(dir, vault, {"init"},
-                            {{kNewMasterPrompt, "one"}, {kRepeatNewMasterPrompt, "two"}});
+                            {{kNewMasterPrompt, "one master 111"}, {kRepeatNewMasterPrompt, "two master 222"}});
   NILKEY_EXPECT(differ.status == 1);
   NILKEY_EXPECT(Has(differ.terminal, "the two entries do not match"));
   NILKEY_EXPECT(!Exists(vault));

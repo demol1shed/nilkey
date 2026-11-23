@@ -553,7 +553,7 @@ NILKEY_TEST(passwd_refuses_a_wrong_current_password_and_a_bad_new_one) {
   NILKEY_EXPECT(!Has(wrong.terminal, secret));
   NILKEY_EXPECT(SameBytes(ReadFile(vault), before));
 
-  const Run mismatch = RunCli(dir, vault, {"passwd"}, Passwd(master, "one", "two"));
+  const Run mismatch = RunCli(dir, vault, {"passwd"}, Passwd(master, "one master 111", "two master 222"));
   NILKEY_EXPECT(mismatch.status == 1);
   NILKEY_EXPECT(Has(mismatch.terminal, "the two entries do not match"));
   NILKEY_EXPECT(SameBytes(ReadFile(vault), before));

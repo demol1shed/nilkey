@@ -27,6 +27,7 @@ enum class ErrorCode : std::uint8_t {
   kNoTerminal,
   kInputTooLong,
   kEmptyInput,
+  kMasterTooShort,
   kInputMismatch,
   kAborted,
   kVaultNotFound,
@@ -88,6 +89,8 @@ constexpr const char* describe(ErrorCode code) {
       return "input is too long";
     case ErrorCode::kEmptyInput:
       return "input is empty";
+    case ErrorCode::kMasterTooShort:
+      return "the new master password must be at least 12 characters";
     case ErrorCode::kInputMismatch:
       return "the two entries do not match";
     case ErrorCode::kAborted:
