@@ -9,6 +9,14 @@ independent of the version of the program.
 
 ## [Unreleased]
 
+### Added
+
+- **A new master password needs at least 12 characters.** `init` and `passwd`
+  refuse a shorter one before asking for it a second time. Characters are
+  counted, not bytes, so 12 Turkish letters pass and 11 do not. Only the length
+  is checked, not how guessable the password is. A vault whose master password is
+  shorter still opens; only a new master password must be 12 or more.
+
 ### Changed
 
 - **No control characters in new names and options.** `add` (the name,
