@@ -30,6 +30,11 @@ namespace nilkey {
 // kIoError if writing to `out` fails.
 [[nodiscard]] Status WritePrintable(std::FILE* out, std::span<const std::byte> text);
 
+// True if WritePrintable() would write `text` exactly as it is: nothing in it
+// would be replaced. Used to refuse new text that would not read back as the
+// user typed it. Empty text is true.
+[[nodiscard]] bool ShowsAsWritten(std::span<const std::byte> text);
+
 // How many terminal cells WritePrintable() fills for `text`, so that columns
 // can be lined up. A replaced character is one cell (the '?'); other
 // characters are one cell, two (East Asian and emoji) or none (combining marks
