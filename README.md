@@ -51,7 +51,7 @@ for example when packaging with a newer compiler.
 ## Usage
 
 ```bash
-nilkey init                                   # create the vault, asks for a master password
+nilkey init                                   # create the vault, asks for a master password (12+ characters)
 nilkey add github --username me --generate    # add a record with a generated password
 nilkey list                                   # names, user names, last change
 nilkey get github                             # copy the password; cleared after 15 seconds
