@@ -13,6 +13,7 @@
 
 using nilkey::ErrorCode;
 using nilkey::PrintableWidth;
+using nilkey::ShowsAsWritten;
 using nilkey::WritePrintable;
 
 namespace {
@@ -34,6 +35,8 @@ std::string Shown(std::string_view input) {
   std::free(buffer);
   return ok ? text : "<write failed>";
 }
+
+bool Written(std::string_view input) { return ShowsAsWritten(B(input)); }
 
 std::size_t Cells(std::string_view input) { return PrintableWidth(B(input)); }
 
@@ -96,6 +99,30 @@ NILKEY_TEST(bytes_that_are_not_valid_utf8_are_replaced_one_by_one) {
   NILKEY_EXPECT(Shown("\xED\xA0\x80") == "???");       // a surrogate
   NILKEY_EXPECT(Shown("ab\xE2\x82") == "ab??");        // truncated at the end
   NILKEY_EXPECT(Shown("\xF4\x90\x80\x80") == "????");  // above U+10FFFF
+}
+
+NILKEY_TEST(text_that_shows_as_written_is_accepted) {
+  NILKEY_EXPECT(Written(""));
+  NILKEY_EXPECT(Written("github.com/user name-1_2"));
+  NILKEY_EXPECT(Written("\xC3\xA7\xC4\x9F\xC4\xB1\xC3\xB6\xC5\x9F\xC3\xBC"));  // Turkish
+  NILKEY_EXPECT(Written("\xF0\x9F\x94\x91 \xE6\x97\xA5"));                      // emoji, CJK
+  NILKEY_EXPECT(Written("\xC2\xA0"));                                            // U+00A0
+  NILKEY_EXPECT(Written("\xE2\x80\xAF\xE2\x81\xA5\xE2\x81\xAA"));  // neighbours of the ranges
+}
+
+NILKEY_TEST(text_that_would_be_replaced_does_not_show_as_written) {
+  NILKEY_EXPECT(!Written("\x1b[31mred"));                     // ESC
+  NILKEY_EXPECT(!Written("a\tb"));                            // tab
+  NILKEY_EXPECT(!Written("a\nb"));                            // newline
+  NILKEY_EXPECT(!Written(std::string_view("a\0b", 3)));       // NUL
+  NILKEY_EXPECT(!Written("a\x7f"));                           // DEL
+  NILKEY_EXPECT(!Written("a\xC2\x85"));                      // C1: NEL
+  NILKEY_EXPECT(!Written("a\xC2\x9B"));                      // C1: CSI
+  NILKEY_EXPECT(!Written("a\xE2\x80\xAE" "b"));               // U+202E
+  NILKEY_EXPECT(!Written("\xE2\x80\x8E"));                    // U+200E
+  NILKEY_EXPECT(!Written("a\x80z"));                          // invalid UTF-8
+  NILKEY_EXPECT(!Written("ab\xE2\x82"));                     // truncated at the end
+  NILKEY_EXPECT(!Written("\xF0\x9F\x94\x91\x01"));            // one bad character after a good one
 }
 
 NILKEY_TEST(a_failed_write_is_an_error) {
