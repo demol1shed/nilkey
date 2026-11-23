@@ -171,6 +171,16 @@ Result<LoadedVault> LoadWithMaster(const std::string& path, const SecureBuffer& 
   return LoadVault(path, guard.value().bytes(), policy);
 }
 
+// Opens the vault only to learn whether `master` is right, and drops it again.
+// A command that asks for more after the master password calls this first, so
+// a wrong one is reported before the user types anything else. It costs one key
+// derivation; the check under the lock in ChangeVault stays the one that counts.
+Status VerifyMaster(const std::string& path, const SecureBuffer& master, MemlockPolicy policy) {
+  const Result<LoadedVault> loaded = LoadWithMaster(path, master, policy);
+  if (!loaded.ok()) return loaded.error();
+  return Ok();
+}
+
 // The cycle of every command that changes the vault: take the lock, open the
 // vault, let `change` edit it, save it, release the lock. The master password
 // is destroyed as soon as the vault is open. Nothing here may fork (see
@@ -365,6 +375,9 @@ int RunAdd(const ParsedArgs& request, const Io& io) {
   Result<SecureBuffer> typed_master = ReadSecret("Master password: ", policy);
   if (!typed_master.ok()) return ReportError(typed_master.error(), io.err);
   std::optional<SecureBuffer> master(std::move(typed_master).value());
+  if (const Status s = VerifyMaster(path.value(), *master, policy); !s.ok()) {
+    return ReportError(s.error(), io.err);
+  }
   const Result<SecureBuffer> password = RecordPassword(request, policy);
   if (!password.ok()) return ReportError(password.error(), io.err);
   const Result<std::int64_t> now = Now();
@@ -455,6 +468,9 @@ int RunUpdate(const ParsedArgs& request, const Io& io) {
   Result<SecureBuffer> typed_master = ReadSecret("Master password: ", policy);
   if (!typed_master.ok()) return ReportError(typed_master.error(), io.err);
   std::optional<SecureBuffer> master(std::move(typed_master).value());
+  if (const Status s = VerifyMaster(path.value(), *master, policy); !s.ok()) {
+    return ReportError(s.error(), io.err);
+  }
   std::optional<SecureBuffer> password;
   if (new_password) {
     Result<SecureBuffer> chosen = RecordPassword(request, policy);
@@ -537,14 +553,17 @@ int RunPasswd(const ParsedArgs& request, const Io& io) {
   Result<SecureBuffer> typed_master = ReadSecret("Current master password: ", policy);
   if (!typed_master.ok()) return ReportError(typed_master.error(), io.err);
   std::optional<SecureBuffer> master(std::move(typed_master).value());
+  if (const Status s = VerifyMaster(path.value(), *master, policy); !s.ok()) {
+    return ReportError(s.error(), io.err);
+  }
   Result<SecureBuffer> typed_next =
       ReadNewSecret("New master password: ", "Repeat the new master password: ", policy);
   if (!typed_next.ok()) return ReportError(typed_next.error(), io.err);
   std::optional<SecureBuffer> next(std::move(typed_next).value());
 
-  // The new key is derived only once the current password has opened the vault,
-  // so a wrong password costs one key derivation, not two. The lock is held
-  // meanwhile; this command is rare.
+  // The new key is derived only once the current password has opened the vault
+  // (it was checked above, and is checked again here under the lock). The lock
+  // is held meanwhile; this command is rare.
   const Status saved =
       ChangeVault(path.value(), master, policy, [&](LoadedVault& loaded) -> Status {
         Result<VaultKey> key = [&]() -> Result<VaultKey> {
