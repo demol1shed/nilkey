@@ -375,12 +375,14 @@ NILKEY_TEST(update_reports_a_missing_record_and_a_wrong_master_password) {
   NILKEY_EXPECT(SameBytes(ReadFile(vault), before));
 
   const std::string secret = "must-not-appear";
-  const Run wrong = Update(dir, vault, {"alpha", "--prompt-password"},
-                           {{kMasterPrompt, "not the master"},
-                            {kRecordPrompt, secret},
-                            {kRepeatRecordPrompt, secret}});
+  // Only the master password is asked: a wrong one is caught before the record
+  // password is requested.
+  const Run wrong =
+      Update(dir, vault, {"alpha", "--prompt-password"}, {{kMasterPrompt, "not the master"}});
+  NILKEY_EXPECT(wrong.answered);
   NILKEY_EXPECT(wrong.status == 1);
   NILKEY_EXPECT(Has(wrong.terminal, "wrong password or corrupted vault file"));
+  NILKEY_EXPECT(!Has(wrong.terminal, kRecordPrompt));
   NILKEY_EXPECT(!Has(wrong.terminal, secret));
   NILKEY_EXPECT(SameBytes(ReadFile(vault), before));
 
@@ -541,9 +543,13 @@ NILKEY_TEST(passwd_refuses_a_wrong_current_password_and_a_bad_new_one) {
   const Bytes before = ReadFile(vault);
 
   const std::string secret = "must-not-appear-1";
-  const Run wrong = RunCli(dir, vault, {"passwd"}, Passwd("not the master", secret, secret));
+  // Only the current master password is asked: a wrong one is caught before the
+  // new one is requested.
+  const Run wrong = RunCli(dir, vault, {"passwd"}, {{kCurrentPrompt, "not the master"}});
+  NILKEY_EXPECT(wrong.answered);
   NILKEY_EXPECT(wrong.status == 1);
   NILKEY_EXPECT(Has(wrong.terminal, "wrong password or corrupted vault file"));
+  NILKEY_EXPECT(!Has(wrong.terminal, kNewMasterPrompt));
   NILKEY_EXPECT(!Has(wrong.terminal, secret));
   NILKEY_EXPECT(SameBytes(ReadFile(vault), before));
 
