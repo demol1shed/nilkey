@@ -9,6 +9,15 @@ independent of the version of the program.
 
 ## [Unreleased]
 
+### Changed
+
+- **`list` on a terminal.** When the output goes to a terminal, `list` prints a
+  header and lines up the columns: names, user names and times each start at the
+  same place, and each column is as wide as its longest entry (measured in
+  terminal cells, so most emoji and East Asian characters line up too). When the
+  output goes to a pipe or a file, the rows are still `name`, `username` and
+  `updated_at` separated by tabs.
+
 ## [0.1.0] - 2026-11-23
 
 First release. nilkey is pre-alpha: its design has not been independently

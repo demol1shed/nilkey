@@ -273,7 +273,7 @@ Kasa dosyası her zaman `0600` (yalnızca sahip okuma/yazma) izinleriyle tutulur
 | `nilkey init` | Yeni kasa dosyası oluşturur | Ana parolayı iki kez etkileşimli alır, `0600` izinle atomik kaydeder. |
 | `nilkey add <name>` | Yeni kayıt ekler | Parolayı echo kapalı terminalden okur veya `--generate` ile CSPRNG üzerinden üretir. |
 | `nilkey get <name>` | Kaydı getirir | Varsayılan olarak `stdout`'a basmaz; panoya kopyalar ve 15 sn sonra temizler (`--print` ile açık yazdırma, `--timeout <sn>` ile süre ayarı). |
-| `nilkey list` | Kayıt adlarını listeler | Parolaları yazdırma akışına sokmaz; yalnızca `name` (ve opsiyonel `username` / `updated_at`) gösterir. |
+| `nilkey list` | Kayıt adlarını listeler | Parolaları yazdırma akışına sokmaz; yalnızca `name` (ve opsiyonel `username` / `updated_at`) gösterir. Terminalde başlıklı ve hizalı, boru/dosyada sekmeyle ayrılmış (§9.4). |
 | `nilkey update <name>` | Mevcut kaydı günceller | Yeni 24 byte nonce ile yeniden şifreler ve atomik kaydeder. |
 | `nilkey delete <name>` | Kaydı siler | Etkileşimli onay ister (`--yes` ile atlanabilir), yeni nonce ile atomik kaydeder. |
 | `nilkey generate` | Kriptografik parola üretir | `randombytes_uniform` ile önyargısız (unbiased) karakter seçimi yapar; uzunluk ve karakter seti bayraklarını destekler. |
@@ -303,6 +303,7 @@ Faz 4'ün uygulama kararları ve bilinen sınırlamaları §9.4'tedir.
 * **`delete`:** onay, ana parola isteminden **önce** sorulur (parolayı yazıp vazgeçen olmasın); soruda kayıt adı yoktur (komut satırından gelen metin denetimsiz terminale çıkmasın); "hayır" `kNotConfirmed` ile çıkış 1 verir; `--yes` soruyu atlar.
 * **`passwd`:** yeni anahtar, mevcut parola kasayı açtıktan **sonra** ve kilit altında türetilir (yanlış parola bir anahtar türetmeye mal olur, iki değil); yeni salt ve yeni nonce (§10 madde 4).
 * **`update`:** dokunulmayan alanlar kasa tamponundan yeni yüke doğrudan taşınır, gizli bir kopya çıkarılmaz (`Vault::Patch`).
+* **`list`:** çıktı bir terminale gidiyorsa (`isatty`) başlıklı ve hizalıdır: `NAME`, `USERNAME` ve `UPDATED` başlıkları; ad ve kullanıcı adı sütunları en uzun girdi kadar geniştir ve aralarında iki boşluk vardır. Genişlik terminal hücresiyle ölçülür (`PrintableWidth`: Doğu Asya ve emoji karakterleri 2, birleştirici işaretler ve birleştiriciler 0, `?` ile değiştirilen karakter 1). Boş kasada hiçbir şey yazılmaz. Boruya ya da dosyaya giderken satırlar eskisi gibi `ad\tkullanıcı\tzaman`'dır; adlarda boşluk olabildiğinden bir betik yalnızca sekmeyle güvenle bölebilir. Metin kesilmez: 1024 baytlık bir ad tüm satırları genişletir.
 * **`generate`:** sabit 88 karakterlik alfabe (26 küçük, 26 büyük, 10 rakam, 26 sembol: `!@#$%^&*()-_=+[]{};:,.<>/?`), `randombytes_uniform`; uzunluk 8..1024 (varsayılan 20), sınıflar `--no-lower`, `--no-upper`, `--no-digits`, `--no-symbols` ile kapatılır; hiçbir sınıf kalmazsa kullanım hatası.
 * **Çıktı güvenliği:** hata iletileri statik metindir, kullanıcı girdisi yankılanmaz. Komut satırından ya da kasadan gelen ad ve metinler yalnızca `WritePrintable` ile (denetim karakterleri `?` olur) terminale yazılır. Sırlar stdio tamponundan geçmez, doğrudan dosya tanımlayıcısına yazılır; çıktı bir terminal değilse sona satır sonu eklenmez (`nilkey generate | xclip` panoya `\n` koymaz).
 * **Bellek uyarısı:** `--allow-unlocked-memory` ile kilitlenemeyen bellek uyarısı süreç başına bir kez yazılır.
@@ -333,6 +334,7 @@ Faz 4'ün uygulama kararları ve bilinen sınırlamaları §9.4'tedir.
 * **Komutlar:**
   * `add`, `update` ve `passwd`'de yanlış ana parola, kayıt ya da yeni parola yazıldıktan **sonra** anlaşılır; `update`'te yanlış kayıt adı ana parola doğrulandıktan sonra. Tüm istemler kilit alınmadan önce bitirildiğinden (kullanıcı yazarken kilit tutulmaz) doğrulama istemlerden sonraya kalır.
   * `passwd` yeni anahtarı kilit tutarken türetir; bu sırada öteki yazarlar bekler.
+  * `list`'in hizalaması terminalin karakter genişliğini tahmin eder. Genişlik tabloları glibc 2.39'un `wcwidth()` çıktısından bir kez üretildi; nilkey çalışma zamanında `wcwidth()` çağırmaz ve yerele bağlı değildir. Birkaç kod noktasının tek resim olarak çizildiği diziler (bayrak, aile, ten tonlu emoji) kod noktası kod noktası sayılır ve bir terminalde birkaç hücre kayabilir.
   * Reddedilen `delete` çıkış 1 verir (betiklerde "başarısız" ile "vazgeçti" ayrılmaz).
   * Silinen ya da değiştirilen kaydın eski şifreli sürümleri yedeklerde ve disk artıklarında kalabilir.
   * `<vault>.lock` dosyası dizinde kalır (silmek yarışı yeniden açardı). Bazı ağ dosya sistemlerinde `flock` zayıftır.
