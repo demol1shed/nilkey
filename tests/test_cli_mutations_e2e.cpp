@@ -564,8 +564,29 @@ NILKEY_TEST(passwd_refuses_a_wrong_current_password_and_a_bad_new_one) {
   NILKEY_EXPECT(Has(empty.terminal, "input is empty"));
   NILKEY_EXPECT(SameBytes(ReadFile(vault), before));
 
-  // The old password still works.
+  // A new master of 11 characters is refused before the repeat prompt.
+  const Run shorter = RunCli(dir, vault, {"passwd"},
+                             {{kCurrentPrompt, master}, {kNewMasterPrompt, "elevenchars"}});
+  NILKEY_EXPECT(shorter.answered);
+  NILKEY_EXPECT(shorter.status == 1);
+  NILKEY_EXPECT(Has(shorter.terminal, "the new master password must be at least 12 characters"));
+  NILKEY_EXPECT(!Has(shorter.terminal, kRepeatNewMasterPrompt));
+  NILKEY_EXPECT(SameBytes(ReadFile(vault), before));
+
+  // Six Turkish letters (12 bytes) are refused.
+  const Run six = RunCli(dir, vault, {"passwd"},
+                         {{kCurrentPrompt, master}, {kNewMasterPrompt, "çüğışö"}});
+  NILKEY_EXPECT(six.status == 1);
+  NILKEY_EXPECT(Has(six.terminal, "at least 12 characters"));
+  NILKEY_EXPECT(SameBytes(ReadFile(vault), before));
+
+  // The old password still works after every refusal.
   NILKEY_EXPECT(Lookup(vault, master, "alpha").found);
+
+  const std::string turkish = "çüğışöçüğışö";
+  const Run twelve = RunCli(dir, vault, {"passwd"}, Passwd(master, turkish, turkish));
+  NILKEY_EXPECT(twelve.status == 0);
+  NILKEY_EXPECT(Lookup(vault, turkish, "alpha").found);
 }
 
 NILKEY_TEST(passwd_can_be_aborted_and_needs_a_vault) {

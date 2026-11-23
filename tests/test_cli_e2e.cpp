@@ -85,6 +85,34 @@ NILKEY_TEST(init_rejects_two_different_or_an_empty_password) {
   NILKEY_EXPECT(!Exists(vault));
 }
 
+// Characters, not bytes: "şifre" style Turkish letters take two bytes each.
+NILKEY_TEST(init_needs_a_master_password_of_12_characters) {
+  TempDir dir;
+  NILKEY_EXPECT(dir.ok());
+  const std::string vault = dir.Path("v.vault");
+
+  // 11 characters: refused before the repeat prompt, and nothing is created.
+  const Run eleven = RunCli(dir, vault, {"init"}, {{kNewMasterPrompt, "elevenchars"}});
+  NILKEY_EXPECT(eleven.answered);
+  NILKEY_EXPECT(eleven.status == 1);
+  NILKEY_EXPECT(Has(eleven.terminal, "the new master password must be at least 12 characters"));
+  NILKEY_EXPECT(!Has(eleven.terminal, kRepeatNewMasterPrompt));
+  NILKEY_EXPECT(!Exists(vault));
+
+  // 6 Turkish letters are 12 bytes but 6 characters.
+  const Run six = RunCli(dir, vault, {"init"}, {{kNewMasterPrompt, "çüğışö"}});
+  NILKEY_EXPECT(six.status == 1);
+  NILKEY_EXPECT(Has(six.terminal, "at least 12 characters"));
+  NILKEY_EXPECT(!Exists(vault));
+
+  // Exactly 12 characters pass, ASCII or Turkish (24 bytes).
+  NILKEY_EXPECT(MakeVault(dir, vault, "twelve chars"));
+  NILKEY_EXPECT(Exists(vault));
+  const std::string turkish = dir.Path("t.vault");
+  NILKEY_EXPECT(MakeVault(dir, turkish, "çüğışöçüğışö"));
+  NILKEY_EXPECT(Exists(turkish));
+}
+
 NILKEY_TEST(init_can_be_aborted_with_ctrl_c) {
   TempDir dir;
   NILKEY_EXPECT(dir.ok());
