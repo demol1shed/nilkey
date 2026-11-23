@@ -59,6 +59,9 @@ struct CliEnv {
   std::vector<std::string> unset;
   std::vector<std::pair<std::string, std::string>> set;
   std::optional<rlim_t> memlock_kib;  // RLIMIT_MEMLOCK, soft and hard, in KiB.
+  // Stdout stays on the pseudo-terminal instead of going to a file, so the
+  // command sees a terminal and what it prints lands in Run::terminal.
+  bool stdout_on_terminal = false;
 };
 
 inline PtyChild StartCli(const TempDir& dir, const std::string& vault, const std::vector<std::string>& args,
@@ -68,7 +71,7 @@ inline PtyChild StartCli(const TempDir& dir, const std::string& vault, const std
   const std::string stdout_path = dir.Path("stdout.txt");
   PtyChild::ExecOptions options;
   options.stdin_path = stdin_path;
-  options.stdout_path = stdout_path.c_str();
+  if (env == nullptr || !env->stdout_on_terminal) options.stdout_path = stdout_path.c_str();
   if (env != nullptr) {
     options.env_unset = env->unset;
     options.env_set = env->set;
