@@ -211,13 +211,20 @@ Status PutSpaces(std::FILE* out, std::size_t count) {
   return Ok();
 }
 
-// Writes `text`, then the spaces that fill the column up to `width` terminal
-// cells, then the gap between columns, so that the next column starts at the
-// same cell in every row. `width` is at least the width of `text` (it is the
-// widest of the column), so the subtraction cannot go below zero.
+// The spaces that follow a text of `used` cells in a column `width` cells wide:
+// the rest of the column and the gap before the next one. The gap is always
+// written; the rest is zero if the column is too narrow, so a wrong width shows
+// up as a row that does not line up, not as a write of about 2^64 spaces.
+std::size_t Padding(std::size_t width, std::size_t used) {
+  return (width > used ? width - used : 0) + kColumnGap;
+}
+
+// Writes `text` and the spaces that bring the next column to the same cell in
+// every row. `width` is the width of the widest text of the column, so it is
+// never less than the width of `text`.
 Status PutColumn(std::FILE* out, std::span<const std::byte> text, std::size_t width) {
   if (const Status s = WritePrintable(out, text); !s.ok()) return s;
-  return PutSpaces(out, width - PrintableWidth(text) + kColumnGap);
+  return PutSpaces(out, Padding(width, PrintableWidth(text)));
 }
 
 // `list` on a terminal: a header and one row per record, with the user names
@@ -237,9 +244,9 @@ Status WriteAlignedList(std::FILE* out, const VaultReader& reader) {
   }
 
   if (std::fputs(kNameHeader.data(), out) == EOF) return make_error(ErrorCode::kIoError);
-  if (const Status s = PutSpaces(out, name_width - kNameHeader.size() + kColumnGap); !s.ok()) return s;
+  if (const Status s = PutSpaces(out, Padding(name_width, kNameHeader.size())); !s.ok()) return s;
   if (std::fputs(kUserHeader.data(), out) == EOF) return make_error(ErrorCode::kIoError);
-  if (const Status s = PutSpaces(out, user_width - kUserHeader.size() + kColumnGap); !s.ok()) return s;
+  if (const Status s = PutSpaces(out, Padding(user_width, kUserHeader.size())); !s.ok()) return s;
   if (std::fputs("UPDATED\n", out) == EOF) return make_error(ErrorCode::kIoError);
 
   for (std::size_t i = 0; i < reader.size(); ++i) {
