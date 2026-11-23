@@ -30,6 +30,14 @@ namespace nilkey {
 // kIoError if writing to `out` fails.
 [[nodiscard]] Status WritePrintable(std::FILE* out, std::span<const std::byte> text);
 
+// How many terminal cells WritePrintable() fills for `text`, so that columns
+// can be lined up. A replaced character is one cell (the '?'); other
+// characters are one cell, two (East Asian and emoji) or none (combining marks
+// and joiners). The width of the common characters is right; a sequence that a
+// terminal draws as one picture (a flag, a family) is counted code point by
+// code point and may be off by a few cells.
+[[nodiscard]] std::size_t PrintableWidth(std::span<const std::byte> text);
+
 }  // namespace nilkey
 
 #endif  // NILKEY_DISPLAY_HPP
