@@ -122,6 +122,23 @@ Status ValidateRecordArguments(const ParsedArgs& request) {
   return ValidateTextOptions(request);
 }
 
+// Text the user creates must read back as written, so a name, user name or URL
+// with a control character (ESC, tab, newline, a direction mark) is refused.
+// This applies only to what is being written: a lookup by name stays
+// permissive, so a record that already has such a name (from an older version
+// or another writer) can still be found, renamed and deleted.
+Status ValidateNewText(const ParsedArgs& request, std::string_view name,
+                       const char* name_message) {
+  if (!ShowsAsWritten(AsBytes(name))) return Error{ErrorCode::kUsage, name_message};
+  if (const auto text = request.Value("username"); text && !ShowsAsWritten(AsBytes(*text))) {
+    return Error{ErrorCode::kUsage, "--username must not contain control characters"};
+  }
+  if (const auto text = request.Value("url"); text && !ShowsAsWritten(AsBytes(*text))) {
+    return Error{ErrorCode::kUsage, "--url must not contain control characters"};
+  }
+  return Ok();
+}
+
 // Notes from stdin, into a SecureBuffer (never a std::string).
 Result<SecureBuffer> ReadNotes(MemlockPolicy policy) {
   Result<SecureBuffer> notes = ReadAllSecret(STDIN_FILENO, kMaxNotesSize, policy);
@@ -332,6 +349,11 @@ int RunAdd(const ParsedArgs& request, const Io& io) {
   if (const Status s = ValidateRecordArguments(request); !s.ok()) {
     return ReportError(s.error(), io.err);
   }
+  if (const Status s = ValidateNewText(request, request.positionals[0],
+                                       "the name must not contain control characters");
+      !s.ok()) {
+    return ReportError(s.error(), io.err);
+  }
   if (const Status s = RequireVaultExists(path.value()); !s.ok()) {
     return ReportError(s.error(), io.err);
   }
@@ -412,6 +434,11 @@ int RunUpdate(const ParsedArgs& request, const Io& io) {
   if (rename.has_value() && !IsValidName(*rename)) {
     return ReportError(
         Error{ErrorCode::kUsage, "--rename must be 1 to 1024 bytes of valid UTF-8"}, io.err);
+  }
+  if (const Status s = ValidateNewText(request, rename.value_or(std::string_view()),
+                                       "--rename must not contain control characters");
+      !s.ok()) {
+    return ReportError(s.error(), io.err);
   }
   if (const Status s = RequireVaultExists(path.value()); !s.ok()) {
     return ReportError(s.error(), io.err);
