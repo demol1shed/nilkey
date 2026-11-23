@@ -355,6 +355,85 @@ NILKEY_TEST(list_shows_names_users_and_times_with_controls_defused) {
   }
 }
 
+// The lines `list` printed after the master password prompt, without the
+// terminal's carriage returns. The line break that the terminal shows when the
+// password is entered is not one of them.
+std::vector<std::string> LinesAfterPrompt(const std::string& terminal) {
+  const std::size_t prompt = terminal.find(kMasterPrompt);
+  if (prompt == std::string::npos) return {"<no prompt>"};
+  const std::size_t entered = terminal.find('\n', prompt);
+  if (entered == std::string::npos) return {"<no line break after the prompt>"};
+  const std::string text = terminal.substr(entered + 1);
+  std::vector<std::string> lines;
+  std::size_t start = 0;
+  while (start < text.size()) {
+    const std::size_t end = text.find('\n', start);
+    std::string line = text.substr(start, end - start);
+    if (!line.empty() && line.back() == '\r') line.pop_back();
+    lines.push_back(line);
+    if (end == std::string::npos) break;
+    start = end + 1;
+  }
+  return lines;
+}
+
+NILKEY_TEST(list_on_a_terminal_lines_up_the_columns) {
+  TempDir dir;
+  NILKEY_EXPECT(dir.ok());
+  const std::string vault = dir.Path("v.vault");
+  const std::string master = "master pass 9";
+  NILKEY_EXPECT(MakeVault(dir, vault, master));
+  const std::string key_name = "\xF0\x9F\x94\x91 key";            // 6 cells: the emoji takes two
+  const std::string turkish = "t\xC3\xBCrk\xC3\xA7" "e \xC4\xB1";  // 8 cells
+  NILKEY_EXPECT(AddRecord(dir, vault, master, "plain", "pw1", {"--username", "alice"}).status == 0);
+  NILKEY_EXPECT(AddRecord(dir, vault, master, key_name, "pw2", {"--username", "a-rather-long-user-name"}).status == 0);
+  NILKEY_EXPECT(AddRecord(dir, vault, master, turkish, "pw3").status == 0);
+  NILKEY_EXPECT(AddRecord(dir, vault, master, "\x1b[31mred", "pw4", {"--username", "bob"}).status == 0);
+
+  CliEnv env;
+  env.stdout_on_terminal = true;
+  const Run run = RunCli(dir, vault, {"list"}, {{kMasterPrompt, master}}, nullptr, &env);
+  NILKEY_EXPECT(run.status == 0);
+  NILKEY_EXPECT(run.out.empty());
+  NILKEY_EXPECT(run.terminal.find('\t') == std::string::npos);
+  NILKEY_EXPECT(!Has(run.terminal, "pw1") && !Has(run.terminal, "pw2") && !Has(run.terminal, "pw3") &&
+                !Has(run.terminal, "pw4"));
+
+  // The name column is 8 cells wide and the user name column 23, each followed
+  // by two spaces. The expected text is written out, not computed.
+  const std::string long_user = "a-rather-long-user-name";
+  const std::string expected_prefix[] = {
+      "NAME" + std::string(6, ' ') + "USERNAME" + std::string(17, ' ') + "UPDATED",
+      "plain" + std::string(5, ' ') + "alice" + std::string(20, ' '),
+      key_name + std::string(4, ' ') + long_user + std::string(2, ' '),
+      turkish + std::string(2, ' ') + std::string(25, ' '),
+      "?[31mred" + std::string(2, ' ') + "bob" + std::string(22, ' '),
+  };
+  const std::vector<std::string> lines = LinesAfterPrompt(run.terminal);
+  NILKEY_EXPECT(lines.size() == 5);
+  NILKEY_EXPECT(lines.size() == 5 && lines[0] == expected_prefix[0]);
+  for (std::size_t i = 1; i < 5 && i < lines.size(); ++i) {
+    NILKEY_EXPECT(lines[i].rfind(expected_prefix[i], 0) == 0);
+    const std::string when = lines[i].substr(expected_prefix[i].size());
+    NILKEY_EXPECT(when.size() == 20 && when[10] == 'T' && when[19] == 'Z');
+  }
+}
+
+NILKEY_TEST(list_on_a_terminal_prints_nothing_for_an_empty_vault) {
+  TempDir dir;
+  NILKEY_EXPECT(dir.ok());
+  const std::string vault = dir.Path("v.vault");
+  const std::string master = "master pass 9";
+  NILKEY_EXPECT(MakeVault(dir, vault, master));
+
+  CliEnv env;
+  env.stdout_on_terminal = true;
+  const Run run = RunCli(dir, vault, {"list"}, {{kMasterPrompt, master}}, nullptr, &env);
+  NILKEY_EXPECT(run.status == 0);
+  NILKEY_EXPECT(LinesAfterPrompt(run.terminal).empty());
+  NILKEY_EXPECT(!Has(run.terminal, "NAME"));
+}
+
 NILKEY_TEST(an_empty_vault_lists_nothing) {
   TempDir dir;
   NILKEY_EXPECT(dir.ok());
