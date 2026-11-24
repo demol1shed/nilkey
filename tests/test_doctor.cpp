@@ -16,7 +16,8 @@ using nilkey::ClassifyDirectoryMode;
 using nilkey::ClassifyFileMode;
 using nilkey::CountSwapAreas;
 using nilkey::Finding;
-using nilkey::LockedBytesNeeded;
+using nilkey::LockedBytesToChange;
+using nilkey::LockedBytesToRead;
 using nilkey::ParentDirectory;
 
 namespace {
@@ -102,23 +103,40 @@ NILKEY_TEST(swap_counting_ignores_blank_lines_and_a_missing_final_newline) {
   NILKEY_EXPECT(CountSwapAreas("Filename Type Size Used Priority") == 0);
 }
 
-NILKEY_TEST(locked_bytes_hold_the_payload_twice_in_whole_pages_plus_an_allowance) {
+NILKEY_TEST(reading_locks_the_payload_once_in_whole_pages_plus_an_allowance) {
+  constexpr std::uint64_t kAllowance = 32 * 1024;
+  NILKEY_EXPECT(LockedBytesToRead(0, 4096) == kAllowance);
+  NILKEY_EXPECT(LockedBytesToRead(1, 4096) == 4096 + kAllowance);
+  NILKEY_EXPECT(LockedBytesToRead(4096, 4096) == 4096 + kAllowance);
+  NILKEY_EXPECT(LockedBytesToRead(4097, 4096) == 8192 + kAllowance);
+  NILKEY_EXPECT(LockedBytesToRead(100, 65536) == 65536 + kAllowance);
+}
+
+NILKEY_TEST(changing_locks_the_payload_twice_in_whole_pages_plus_an_allowance) {
   constexpr std::uint64_t kAllowance = 256 * 1024;
-  NILKEY_EXPECT(LockedBytesNeeded(0, 4096) == kAllowance);
-  NILKEY_EXPECT(LockedBytesNeeded(1, 4096) == 2 * 4096 + kAllowance);
-  NILKEY_EXPECT(LockedBytesNeeded(4096, 4096) == 2 * 4096 + kAllowance);
-  NILKEY_EXPECT(LockedBytesNeeded(4097, 4096) == 2 * 8192 + kAllowance);
-  NILKEY_EXPECT(LockedBytesNeeded(100, 65536) == 2 * 65536 + kAllowance);
+  NILKEY_EXPECT(LockedBytesToChange(0, 4096) == kAllowance);
+  NILKEY_EXPECT(LockedBytesToChange(1, 4096) == 2 * 4096 + kAllowance);
+  NILKEY_EXPECT(LockedBytesToChange(4096, 4096) == 2 * 4096 + kAllowance);
+  NILKEY_EXPECT(LockedBytesToChange(4097, 4096) == 2 * 8192 + kAllowance);
+  NILKEY_EXPECT(LockedBytesToChange(100, 65536) == 2 * 65536 + kAllowance);
 }
 
 NILKEY_TEST(locked_bytes_for_the_largest_vault_do_not_overflow) {
   const std::uint64_t largest = 16U * 1024U * 1024U + 16U;
-  NILKEY_EXPECT(LockedBytesNeeded(static_cast<std::uint32_t>(largest), 4096) >= 2 * largest);
-  NILKEY_EXPECT(LockedBytesNeeded(UINT32_MAX, 4096) > std::uint64_t{UINT32_MAX} * 2);
+  NILKEY_EXPECT(LockedBytesToRead(static_cast<std::uint32_t>(largest), 4096) >= largest);
+  NILKEY_EXPECT(LockedBytesToChange(static_cast<std::uint32_t>(largest), 4096) >= 2 * largest);
+  NILKEY_EXPECT(LockedBytesToRead(UINT32_MAX, 4096) > std::uint64_t{UINT32_MAX});
+  NILKEY_EXPECT(LockedBytesToChange(UINT32_MAX, 4096) > std::uint64_t{UINT32_MAX} * 2);
+}
+
+NILKEY_TEST(reading_needs_less_than_changing) {
+  NILKEY_EXPECT(LockedBytesToRead(0, 4096) < LockedBytesToChange(0, 4096));
+  NILKEY_EXPECT(LockedBytesToRead(1 << 20, 4096) < LockedBytesToChange(1 << 20, 4096));
 }
 
 NILKEY_TEST(a_zero_page_size_does_not_divide_by_zero) {
-  NILKEY_EXPECT(LockedBytesNeeded(10, 0) == LockedBytesNeeded(10, 4096));
+  NILKEY_EXPECT(LockedBytesToRead(10, 0) == LockedBytesToRead(10, 4096));
+  NILKEY_EXPECT(LockedBytesToChange(10, 0) == LockedBytesToChange(10, 4096));
 }
 
 NILKEY_TEST(the_parent_directory_of_a_path) {

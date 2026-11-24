@@ -43,11 +43,17 @@ struct Check {
 [[nodiscard]] unsigned CountSwapAreas(std::string_view proc_swaps);
 
 // The memory nilkey may have to lock at once for a vault whose encrypted
-// payload is `payload_len` bytes: the payload is held twice while a command
-// changes it (SPEC.md 6.4), each copy rounded up to whole pages, plus a fixed
-// allowance for the keys, passwords and input buffers. An estimate, not a
-// promise.
-[[nodiscard]] std::uint64_t LockedBytesNeeded(std::uint32_t payload_len, std::uint64_t page_size);
+// payload is `payload_len` bytes, rounded up to whole pages. Estimates, not
+// promises; the constants come from measuring the release build (glibc, 4 KiB
+// pages) and keep a margin.
+//
+// Reading (`list`, `get`) holds the payload once, plus a small allowance for
+// the keys and the password.
+[[nodiscard]] std::uint64_t LockedBytesToRead(std::uint32_t payload_len, std::uint64_t page_size);
+
+// Changing (`add`, `update`, `delete`, `passwd`) holds the payload twice (SPEC.md
+// 6.4), plus an allowance that covers the 64 KiB notes input buffer.
+[[nodiscard]] std::uint64_t LockedBytesToChange(std::uint32_t payload_len, std::uint64_t page_size);
 
 // The directory part of `path`: "." if it has none, "/" for a file in the root.
 [[nodiscard]] std::string ParentDirectory(const std::string& path);

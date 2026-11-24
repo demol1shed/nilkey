@@ -864,6 +864,19 @@ Result<VaultHeader> ReadHeaderOnly(const std::string& path) {
   return header.value();
 }
 
+// One line: the limit, what the commands in `what` need, and whether it fits.
+void PrintLockNeed(DoctorReport& report, rlim_t limit, const char* what, std::uint64_t needed) {
+  const bool fits = limit == RLIM_INFINITY || limit >= needed;
+  std::FILE* const out = report.Begin(fits ? Finding::kOk : Finding::kProblem);
+  std::fputs("memory lock limit: ", out);
+  PrintLimit(out, limit);
+  std::fprintf(out, "; %s needs about %llu KiB", what,
+               static_cast<unsigned long long>((needed + 1023) / 1024));
+  std::fputs(fits ? "\n"
+                  : "; raise `ulimit -l`, or pass --allow-unlocked-memory to run without it\n",
+             out);
+}
+
 // SPEC.md 7.3: running out of lockable memory for the vault stops nilkey (a
 // problem); too little for the Argon2id working memory only warns at run time,
 // so it is a note here.
@@ -875,17 +888,11 @@ void CheckMemoryLock(DoctorReport& report, const std::optional<VaultHeader>& hea
   }
   if (header.has_value()) {
     const long page = sysconf(_SC_PAGESIZE);
-    const std::uint64_t needed =
-        LockedBytesNeeded(header->payload_len, page > 0 ? static_cast<std::uint64_t>(page) : 4096);
-    const bool fits = limit.rlim_cur == RLIM_INFINITY || limit.rlim_cur >= needed;
-    std::FILE* const out = report.Begin(fits ? Finding::kOk : Finding::kProblem);
-    std::fputs("memory lock limit: ", out);
-    PrintLimit(out, limit.rlim_cur);
-    std::fprintf(out, "; this vault needs about %llu KiB",
-                 static_cast<unsigned long long>((needed + 1023) / 1024));
-    std::fputs(fits ? "\n"
-                    : "; raise `ulimit -l`, or pass --allow-unlocked-memory to run without it\n",
-               out);
+    const std::uint64_t page_size = page > 0 ? static_cast<std::uint64_t>(page) : 4096;
+    PrintLockNeed(report, limit.rlim_cur, "reading (list, get)",
+                  LockedBytesToRead(header->payload_len, page_size));
+    PrintLockNeed(report, limit.rlim_cur, "changing (add, update, delete, passwd)",
+                  LockedBytesToChange(header->payload_len, page_size));
   }
   const KdfParams kdf = header.has_value() ? header->kdf : kDefaultKdfParams;
   if (MemlockLimitCoversKdf(kdf)) {
