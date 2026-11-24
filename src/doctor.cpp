@@ -9,8 +9,16 @@ namespace {
 constexpr mode_t kGroupOtherWrite = S_IWGRP | S_IWOTH;
 constexpr mode_t kGroupOtherAny = S_IRWXG | S_IRWXO;
 
-// Keys, record passwords and the 64 KiB notes input buffer.
-constexpr std::uint64_t kSmallBuffersAllowance = 256 * 1024;
+// Measured: reading needed the payload plus 10 to 12 KiB.
+constexpr std::uint64_t kReadAllowance = 32 * 1024;
+// Measured: the worst case, `add` with 64 KiB of notes, needed twice the payload
+// plus 132 KiB.
+constexpr std::uint64_t kChangeAllowance = 256 * 1024;
+
+std::uint64_t PayloadPages(std::uint32_t payload_len, std::uint64_t page_size) {
+  if (page_size == 0) page_size = 4096;
+  return (std::uint64_t{payload_len} + page_size - 1) / page_size * page_size;
+}
 
 }  // namespace
 
@@ -53,10 +61,12 @@ unsigned CountSwapAreas(std::string_view proc_swaps) {
   return areas;
 }
 
-std::uint64_t LockedBytesNeeded(std::uint32_t payload_len, std::uint64_t page_size) {
-  if (page_size == 0) page_size = 4096;
-  const std::uint64_t pages = (std::uint64_t{payload_len} + page_size - 1) / page_size;
-  return 2 * pages * page_size + kSmallBuffersAllowance;
+std::uint64_t LockedBytesToRead(std::uint32_t payload_len, std::uint64_t page_size) {
+  return PayloadPages(payload_len, page_size) + kReadAllowance;
+}
+
+std::uint64_t LockedBytesToChange(std::uint32_t payload_len, std::uint64_t page_size) {
+  return 2 * PayloadPages(payload_len, page_size) + kChangeAllowance;
 }
 
 std::string ParentDirectory(const std::string& path) {
