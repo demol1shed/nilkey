@@ -179,8 +179,46 @@ NILKEY_TEST(a_lock_limit_the_vault_does_not_fit_in_is_a_problem) {
 
   const Doctor d = RunDoctor(dir, vault, 0, true);
   NILKEY_EXPECT(d.status == 1);
-  NILKEY_EXPECT(LineHas(d.out, "problem", "memory lock limit: 0 KiB"));
+  NILKEY_EXPECT(LineHas(d.out, "problem", "memory lock limit: 0 KiB; reading"));
+  NILKEY_EXPECT(LineHas(d.out, "problem", "memory lock limit: 0 KiB; changing"));
   NILKEY_EXPECT(Has(d.out, "ulimit -l"));
+}
+
+// The test vault is under one page of payload: reading needs 4 + 32 = 36 KiB,
+// changing needs 8 + 256 = 264 KiB.
+NILKEY_TEST(a_limit_that_covers_reading_but_not_changing_is_ok_and_a_problem) {
+  TempDir dir;
+  NILKEY_EXPECT(dir.ok());
+  const std::string vault = dir.Path("v.vault");
+  NILKEY_EXPECT(MakeHealthyVault(dir, vault));
+
+  const Doctor d = RunDoctor(dir, vault, 64, true);
+  NILKEY_EXPECT(d.status == 1);
+  NILKEY_EXPECT(LineHas(d.out, "ok", "memory lock limit: 64 KiB; reading (list, get) needs about 36 KiB"));
+  NILKEY_EXPECT(LineHas(d.out, "problem", "memory lock limit: 64 KiB; changing"));
+  NILKEY_EXPECT(Has(d.out, "needs about 264 KiB"));
+}
+
+NILKEY_TEST(a_limit_that_covers_both_is_ok_on_both_lines) {
+  TempDir dir;
+  NILKEY_EXPECT(dir.ok());
+  const std::string vault = dir.Path("v.vault");
+  NILKEY_EXPECT(MakeHealthyVault(dir, vault));
+
+  const Doctor d = RunDoctor(dir, vault, 264, true);
+  NILKEY_EXPECT(d.status == 0);
+  NILKEY_EXPECT(LineHas(d.out, "ok", "memory lock limit: 264 KiB; reading"));
+  NILKEY_EXPECT(LineHas(d.out, "ok", "memory lock limit: 264 KiB; changing"));
+}
+
+NILKEY_TEST(a_limit_just_under_the_need_is_a_problem) {
+  TempDir dir;
+  NILKEY_EXPECT(dir.ok());
+  const std::string vault = dir.Path("v.vault");
+  NILKEY_EXPECT(MakeHealthyVault(dir, vault));
+
+  const Doctor d = RunDoctor(dir, vault, 35, true);
+  NILKEY_EXPECT(LineHas(d.out, "problem", "memory lock limit: 35 KiB; reading"));
 }
 
 NILKEY_TEST(a_damaged_header_is_a_problem) {
