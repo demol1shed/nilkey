@@ -19,6 +19,13 @@ independent of the version of the program.
 
 ### Changed
 
+- **`doctor` sizes the memory lock need per kind of command.** It used one
+  estimate (twice the payload plus 256 KiB), so with a 64 KiB `ulimit -l` it
+  reported a problem although `list` worked. It now prints one line for reading
+  (`list`, `get`: the payload plus 32 KiB) and one for changing (`add`,
+  `update`, `delete`, `passwd`: twice the payload plus 256 KiB). A limit that
+  covers reading but not changing gives `ok` and `problem`. The numbers come from
+  measuring the release build and stay an estimate.
 - **No control characters in new names and options.** `add` (the name,
   `--username`, `--url`) and `update` (`--rename`, `--username`, `--url`) now
   refuse text that would not show as written: control characters such as ESC,
