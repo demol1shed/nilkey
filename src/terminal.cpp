@@ -15,6 +15,7 @@
 #include <span>
 
 #include "nilkey/fd_io.hpp"
+#include "nilkey/tlv.hpp"
 
 namespace nilkey {
 
@@ -243,8 +244,19 @@ Result<SecureBuffer> ReadSecret(const char* prompt, MemlockPolicy policy) {
 
 std::size_t CountCharacters(std::span<const std::byte> text) {
   std::size_t count = 0;
-  for (const std::byte b : text) {
-    if ((std::to_integer<unsigned>(b) & 0xC0U) != 0x80U) ++count;
+  while (!text.empty()) {
+    std::size_t length = 1;  // ASCII, or one byte that is not valid UTF-8.
+    if (std::to_integer<unsigned>(text[0]) >= 0x80U) {
+      // The shortest valid prefix after such a lead byte is exactly one sequence.
+      for (std::size_t n = 2; n <= 4 && n <= text.size(); ++n) {
+        if (IsValidUtf8(text.first(n))) {
+          length = n;
+          break;
+        }
+      }
+    }
+    text = text.subspan(length);
+    ++count;
   }
   return count;
 }

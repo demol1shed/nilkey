@@ -36,8 +36,8 @@ inline constexpr std::size_t kMaxSecretSize = 1024;
 // Shortest new master password, in characters (not bytes).
 inline constexpr std::size_t kMinMasterCharacters = 12;
 
-// Counts characters in UTF-8 text: every byte that is not a continuation byte
-// (10xxxxxx) counts as one, so each invalid byte counts as one character too.
+// Counts characters in UTF-8 text: a valid sequence counts as one, and so does
+// each byte that is not part of one. Only empty text counts as zero.
 [[nodiscard]] std::size_t CountCharacters(std::span<const std::byte> text);
 
 // Reads a secret twice and returns it if both entries are identical
