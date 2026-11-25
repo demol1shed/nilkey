@@ -9,6 +9,14 @@ independent of the version of the program.
 
 ## [Unreleased]
 
+### Fixed
+
+- Bytes from `0x80` to `0xBF` that were not part of a UTF-8 sequence (possible
+  on a terminal that does not use UTF-8) were not counted as characters. A new
+  master password could be counted as too short, and a record password made only
+  of such bytes was refused with the message about the master password. Every
+  byte that is not part of a valid UTF-8 sequence now counts as one character.
+
 ## [0.2.0] - 2026-11-25
 
 ### Added
