@@ -9,6 +9,8 @@ independent of the version of the program.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-25
+
 ### Added
 
 - **A new master password needs at least 12 characters.** `init` and `passwd`
@@ -105,5 +107,6 @@ and what rests on design and review rather than on a test is listed in
 - **Build.** C++20 with `-fno-exceptions` and `-fno-rtti`; libsodium (1.0.18 or
   newer) is the only dependency. Linux only.
 
-[Unreleased]: https://github.com/demol1shed/nilkey/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/demol1shed/nilkey/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/demol1shed/nilkey/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/demol1shed/nilkey/releases/tag/v0.1.0
