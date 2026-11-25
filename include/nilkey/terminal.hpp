@@ -35,6 +35,7 @@ inline constexpr std::size_t kMaxSecretSize = 1024;
 
 // Shortest new master password, in characters (not bytes).
 inline constexpr std::size_t kMinMasterCharacters = 12;
+static_assert(kMinMasterCharacters == 12, "update the kMasterTooShort message in error.hpp");
 
 // Counts characters in UTF-8 text: a valid sequence counts as one, and so does
 // each byte that is not part of one. Only empty text counts as zero.
