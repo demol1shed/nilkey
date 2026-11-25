@@ -167,6 +167,12 @@ int BodyNewSecret() {
   return 0;
 }
 
+int BodyNewSecretNotUtf8() {
+  const auto secret = ReadNewSecret("l1> ", "l1c> ", kRequire);
+  if (!secret.ok()) return 10;
+  return Holds(secret.value(), "\xB1\xB1") ? 0 : 11;
+}
+
 int BodyNoTerminal() {
   const auto secret = ReadSecret("Password: ", kRequire);
   if (secret.ok() || secret.error().code != ErrorCode::kNoTerminal) return 10;
@@ -294,6 +300,22 @@ NILKEY_TEST(counts_characters_not_bytes) {
   NILKEY_EXPECT(count(std::string_view("a\0b", 3)) == 3);
   NILKEY_EXPECT(count("\xFF\xFE") == 2);        // invalid bytes count one each
   NILKEY_EXPECT(count("\xFF" "abc") == 4);
+  NILKEY_EXPECT(count("\x80\x80") == 2);        // stray continuation bytes
+  NILKEY_EXPECT(count("\xC3") == 1);            // lead byte alone
+  NILKEY_EXPECT(count("\xE2\x82") == 2);        // cut-off sequence
+  NILKEY_EXPECT(count("\xC3\xA7\x80") == 2);    // valid, then stray
+  NILKEY_EXPECT(count("\xE0\x80\x80") == 3);    // overlong form
+}
+
+// A record password has no minimum, so one made only of bytes from 0x80 to 0xBF
+// (a Latin-1 terminal) must be accepted.
+NILKEY_TEST(new_secret_accepts_bytes_that_are_not_utf8) {
+  PtyChild child = PtyChild::Start(BodyNewSecretNotUtf8);
+  NILKEY_EXPECT(child.WaitFor("l1> ", kWaitMs));
+  child.Send("\xB1\xB1\n");
+  NILKEY_EXPECT(child.WaitFor("l1c> ", kWaitMs));
+  child.Send("\xB1\xB1\n");
+  NILKEY_EXPECT(child.Wait(kWaitMs) == 0);
 }
 
 NILKEY_TEST(fails_without_a_controlling_terminal) {
