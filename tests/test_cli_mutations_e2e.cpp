@@ -589,6 +589,42 @@ NILKEY_TEST(passwd_refuses_a_wrong_current_password_and_a_bad_new_one) {
   NILKEY_EXPECT(Lookup(vault, turkish, "alpha").found);
 }
 
+// `add` derives two keys and `passwd` three; the warning is for the process.
+// A limit of zero is below any KDF cost, so the vault memory stays unlocked too.
+NILKEY_TEST(the_argon2_memory_warning_is_printed_once_per_command) {
+  TempDir dir;
+  NILKEY_EXPECT(dir.ok());
+  const std::string vault = dir.Path("v.vault");
+  const std::string master = "master pass w1";
+  NILKEY_EXPECT(MakeVault(dir, vault, master));
+
+  CliEnv env;
+  env.memlock_kib = 0;
+  const auto warnings = [](const std::string& terminal) {
+    constexpr std::string_view kWarning = "key derivation memory may be written to swap";
+    std::size_t count = 0;
+    for (std::size_t at = terminal.find(kWarning); at != std::string::npos;
+         at = terminal.find(kWarning, at + 1)) {
+      ++count;
+    }
+    return count;
+  };
+
+  const Run add = RunCli(dir, vault, {"add", "site", "--allow-unlocked-memory"},
+                         {{kMasterPrompt, master}, {kRecordPrompt, "pw"}, {kRepeatRecordPrompt, "pw"}},
+                         nullptr, &env);
+  NILKEY_EXPECT(add.status == 0);
+  NILKEY_EXPECT(warnings(add.terminal) == 1);
+
+  const std::string next = "master pass w2";
+  const Run passwd = RunCli(dir, vault, {"passwd", "--allow-unlocked-memory"},
+                            {{kCurrentPrompt, master}, {kNewMasterPrompt, next},
+                             {kRepeatNewMasterPrompt, next}},
+                            nullptr, &env);
+  NILKEY_EXPECT(passwd.status == 0);
+  NILKEY_EXPECT(warnings(passwd.terminal) == 1);
+}
+
 NILKEY_TEST(passwd_can_be_aborted_and_needs_a_vault) {
   TempDir dir;
   NILKEY_EXPECT(dir.ok());
