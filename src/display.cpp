@@ -61,8 +61,8 @@ bool ActsOnTheTerminal(std::uint32_t code) {
 // on the locale or on the glibc of the machine it runs on.
 //
 // Each table is sorted and has no overlaps, which is what InRanges() needs for
-// its binary search. A range is a closed interval: {0x300, 0x36F} is U+0300
-// through U+036F.
+// its binary search; the static_asserts below the tables check it. A range is a
+// closed interval: {0x300, 0x36F} is U+0300 through U+036F.
 //
 // This is a good guess, not a promise. A terminal may disagree with glibc about
 // some characters, and a sequence of several code points that is drawn as one
@@ -201,6 +201,22 @@ constexpr Range kWide[] = {
     {0x2B740, 0x2B81D}, {0x2B820, 0x2CEA1}, {0x2CEB0, 0x2EBE0}, {0x2EBF0, 0x2EE5D},
     {0x2F800, 0x2FA1D}, {0x30000, 0x3134A}, {0x31350, 0x323AF},
 };
+
+// True if no range ends before it starts and each one starts after the one
+// before it ends.
+template <std::size_t N>
+constexpr bool IsSortedAndDisjoint(const Range (&table)[N]) {
+  for (std::size_t i = 0; i < N; ++i) {
+    if (table[i].first > table[i].last) return false;
+    if (i > 0 && table[i].first <= table[i - 1].last) return false;
+  }
+  return true;
+}
+
+static_assert(IsSortedAndDisjoint(kZeroWidth),
+              "kZeroWidth must be sorted and have no overlaps");
+static_assert(IsSortedAndDisjoint(kWide),
+              "kWide must be sorted and have no overlaps");
 
 // True if `code` is inside one of the ranges of `table` (sorted, no overlaps):
 // finds the first range that ends at or after `code` and checks that it also
