@@ -376,8 +376,11 @@ int RunAdd(const ParsedArgs& request, const Io& io) {
   Result<SecureBuffer> typed_master = ReadSecret("Master password: ", policy);
   if (!typed_master.ok()) return ReportError(typed_master.error(), io.err);
   std::optional<SecureBuffer> master(std::move(typed_master).value());
-  if (const Status s = VerifyMaster(path.value(), *master, policy); !s.ok()) {
-    return ReportError(s.error(), io.err);
+  // With --generate nothing more is asked, so ChangeVault's check is enough.
+  if (!request.Has("generate")) {
+    if (const Status s = VerifyMaster(path.value(), *master, policy); !s.ok()) {
+      return ReportError(s.error(), io.err);
+    }
   }
   const Result<SecureBuffer> password = RecordPassword(request, policy);
   if (!password.ok()) return ReportError(password.error(), io.err);
@@ -469,8 +472,11 @@ int RunUpdate(const ParsedArgs& request, const Io& io) {
   Result<SecureBuffer> typed_master = ReadSecret("Master password: ", policy);
   if (!typed_master.ok()) return ReportError(typed_master.error(), io.err);
   std::optional<SecureBuffer> master(std::move(typed_master).value());
-  if (const Status s = VerifyMaster(path.value(), *master, policy); !s.ok()) {
-    return ReportError(s.error(), io.err);
+  // Only a typed record password is a further prompt worth guarding.
+  if (request.Has("prompt-password")) {
+    if (const Status s = VerifyMaster(path.value(), *master, policy); !s.ok()) {
+      return ReportError(s.error(), io.err);
+    }
   }
   std::optional<SecureBuffer> password;
   if (new_password) {
