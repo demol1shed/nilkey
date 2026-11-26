@@ -45,7 +45,8 @@ struct Check {
 // The memory nilkey may have to lock at once for a vault whose encrypted
 // payload is `payload_len` bytes, rounded up to whole pages. Estimates, not
 // promises; the constants come from measuring the release build (glibc, 4 KiB
-// pages) and keep a margin.
+// pages) and keep a margin. With larger pages the allowances grow to a number of
+// pages, which is an estimate that has not been measured.
 //
 // Reading (`list`, `get`) holds the payload once, plus a small allowance for
 // the keys and the password.
