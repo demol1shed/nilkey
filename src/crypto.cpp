@@ -28,7 +28,9 @@ Result<SecureBuffer> DeriveKey(std::span<const std::byte> password, const KdfPar
   Status params_ok = ValidateKdfParams(params);
   if (!params_ok.ok()) return params_ok.error();
 
-  if (!MemlockLimitCoversKdf(params)) {
+  static bool warned = false;  // A command may derive several keys.
+  if (!warned && !MemlockLimitCoversKdf(params)) {
+    warned = true;
     std::fputs(
         "warning: RLIMIT_MEMLOCK is below the Argon2id memory cost; key derivation memory may "
         "be written to swap (see `ulimit -l`)\n",
