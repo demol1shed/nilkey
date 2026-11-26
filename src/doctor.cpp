@@ -2,6 +2,8 @@
 
 #include <sys/stat.h>
 
+#include <algorithm>
+
 namespace nilkey {
 
 namespace {
@@ -14,6 +16,10 @@ constexpr std::uint64_t kReadAllowance = 32 * 1024;
 // Measured: the worst case, `add` with 64 KiB of notes, needed twice the payload
 // plus 132 KiB.
 constexpr std::uint64_t kChangeAllowance = 256 * 1024;
+// Every buffer locks at least one whole page, so with large pages the allowances
+// are at least this many pages. Estimated from the 4 KiB figures, not measured.
+constexpr std::uint64_t kReadAllowancePages = 4;
+constexpr std::uint64_t kChangeAllowancePages = 8;
 
 std::uint64_t PayloadPages(std::uint32_t payload_len, std::uint64_t page_size) {
   if (page_size == 0) page_size = 4096;
@@ -62,11 +68,13 @@ unsigned CountSwapAreas(std::string_view proc_swaps) {
 }
 
 std::uint64_t LockedBytesToRead(std::uint32_t payload_len, std::uint64_t page_size) {
-  return PayloadPages(payload_len, page_size) + kReadAllowance;
+  return PayloadPages(payload_len, page_size) +
+         std::max(kReadAllowance, kReadAllowancePages * page_size);
 }
 
 std::uint64_t LockedBytesToChange(std::uint32_t payload_len, std::uint64_t page_size) {
-  return 2 * PayloadPages(payload_len, page_size) + kChangeAllowance;
+  return 2 * PayloadPages(payload_len, page_size) +
+         std::max(kChangeAllowance, kChangeAllowancePages * page_size);
 }
 
 std::string ParentDirectory(const std::string& path) {

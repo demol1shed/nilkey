@@ -109,7 +109,8 @@ NILKEY_TEST(reading_locks_the_payload_once_in_whole_pages_plus_an_allowance) {
   NILKEY_EXPECT(LockedBytesToRead(1, 4096) == 4096 + kAllowance);
   NILKEY_EXPECT(LockedBytesToRead(4096, 4096) == 4096 + kAllowance);
   NILKEY_EXPECT(LockedBytesToRead(4097, 4096) == 8192 + kAllowance);
-  NILKEY_EXPECT(LockedBytesToRead(100, 65536) == 65536 + kAllowance);
+  // Large pages: the allowance is a number of pages instead.
+  NILKEY_EXPECT(LockedBytesToRead(100, 65536) == 65536 + 4 * 65536);
 }
 
 NILKEY_TEST(changing_locks_the_payload_twice_in_whole_pages_plus_an_allowance) {
@@ -118,7 +119,8 @@ NILKEY_TEST(changing_locks_the_payload_twice_in_whole_pages_plus_an_allowance) {
   NILKEY_EXPECT(LockedBytesToChange(1, 4096) == 2 * 4096 + kAllowance);
   NILKEY_EXPECT(LockedBytesToChange(4096, 4096) == 2 * 4096 + kAllowance);
   NILKEY_EXPECT(LockedBytesToChange(4097, 4096) == 2 * 8192 + kAllowance);
-  NILKEY_EXPECT(LockedBytesToChange(100, 65536) == 2 * 65536 + kAllowance);
+  // Large pages: the allowance is a number of pages instead.
+  NILKEY_EXPECT(LockedBytesToChange(100, 65536) == 2 * 65536 + 8 * 65536);
 }
 
 NILKEY_TEST(locked_bytes_for_the_largest_vault_do_not_overflow) {
