@@ -342,6 +342,7 @@ Faz 4'ün uygulama kararları ve bilinen sınırlamaları §9.4'tedir.
   * Silinen ya da değiştirilen kaydın eski şifreli sürümleri yedeklerde ve disk artıklarında kalabilir.
   * `<vault>.lock` dosyası dizinde kalır (silmek yarışı yeniden açardı). Bazı ağ dosya sistemlerinde `flock` zayıftır.
   * Kayıt adlarında Unicode normalizasyonu yoktur (§6.4).
+  * "Yeni metinde denetim karakteri yok" kuralı yalnızca `?` ile değiştirilecek karakterleri reddeder. Ekranda iz bırakmayabilen karakterler ad, `--username` ve `--url` içinde kabul edilir: sıfır genişlikli ve etiket karakterleri (ör. U+180E, U+200B–U+200D, U+2060–U+2064, U+206A–U+206F, U+FEFF, U+E0001, U+E0020–U+E007F), varyasyon seçicileri (ör. U+FE00–U+FE0F) ve yumuşak tire U+00AD (`PrintableWidth` onu 1 hücre, ötekileri 0 sayar). Liste tam değildir. Bu yüzden ekranda aynı görünebilen iki ayrı kayıt oluşturulabilir; bu bilinçli bir sınırdır.
 * **Terminal:** `SIGKILL` ve çökmede terminal ayarları geri yüklenmez; `ECHO` kapalı kalırsa `stty sane`.
 * **`doctor`:** swap'ın şifreli olup olmadığına ve hibernasyon yapılandırmasına bakılmaz, yalnızca etkin swap alanı sayılır; `ptrace_scope` ve `core_pattern` raporlanmaz; yalnızca kasanın doğrudan üst dizini denetlenir; pano satırı aracın kurulu olduğunu gösterir, çalıştığını değil; kilitli bellek ihtiyacı bir tahmindir ve yalnızca bu sürecin sınırına bakar.
 
