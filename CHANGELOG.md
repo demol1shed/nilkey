@@ -17,6 +17,11 @@ independent of the version of the program.
 
 ### Fixed
 
+- `doctor` grows its memory lock estimate on systems with large memory pages. The
+  allowance for small buffers was fixed, so with 64 KiB pages it could report a
+  limit as enough when the commands would refuse to run. The new figures are
+  estimates that have not been measured on such a system; 4 KiB pages give the
+  same numbers as before.
 - The warning that `ulimit -l` is below the Argon2id memory cost is printed once
   per command. `add` and `update` printed it twice and `passwd` three times.
 - Bytes from `0x80` to `0xBF` that were not part of a UTF-8 sequence (possible
