@@ -9,8 +9,16 @@ independent of the version of the program.
 
 ## [Unreleased]
 
+### Changed
+
+- `add --generate` and `update` without `--prompt-password` derive the key once
+  again instead of twice. Nothing is asked after the master password there, so
+  the early check had nothing to protect.
+
 ### Fixed
 
+- The warning that `ulimit -l` is below the Argon2id memory cost is printed once
+  per command. `add` and `update` printed it twice and `passwd` three times.
 - Bytes from `0x80` to `0xBF` that were not part of a UTF-8 sequence (possible
   on a terminal that does not use UTF-8) were not counted as characters. A new
   master password could be counted as too short, and a record password made only
