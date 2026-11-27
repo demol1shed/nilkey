@@ -52,3 +52,54 @@ jobs:
           readelf -hW build/nilkey | grep -q 'Type:.*DYN'
           readelf -lW build/nilkey | grep -q GNU_RELRO
           readelf -dW build/nilkey | grep -q BIND_NOW
+
+  fuzz:
+    name: clang++-18 / fuzz
+    runs-on: ubuntu-24.04
+    env:
+      CXX: clang++-18
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends cmake pkg-config libsodium-dev
+
+      # Recent runner kernels use a wider ASLR range than ASan supports.
+      - name: Lower mmap ASLR entropy for ASan
+        run: sudo sysctl vm.mmap_rnd_bits=28
+
+      - name: Configure
+        run: >
+          cmake -B build-fuzz -DCMAKE_BUILD_TYPE=Debug
+          -DNILKEY_ENABLE_SANITIZERS=ON -DNILKEY_ENABLE_FUZZING=ON
+
+      - name: Build (warnings are errors)
+        run: >
+          cmake --build build-fuzz -j --target
+          fuzz_header fuzz_header_replay fuzz_envelope fuzz_envelope_replay
+
+      - name: Write the seed corpora
+        run: |
+          mkdir -p build-fuzz/corpus/header build-fuzz/corpus/envelope build-fuzz/artifacts
+          build-fuzz/tests/fuzz_header_replay --write-seeds build-fuzz/corpus/header
+          build-fuzz/tests/fuzz_envelope_replay --write-seeds build-fuzz/corpus/envelope
+
+      - name: Fuzz the header parser
+        run: >
+          build-fuzz/tests/fuzz_header -max_total_time=60 -max_len=128
+          -print_final_stats=1 -artifact_prefix=build-fuzz/artifacts/
+          build-fuzz/corpus/header
+
+      - name: Fuzz the envelope parser
+        run: >
+          build-fuzz/tests/fuzz_envelope -max_total_time=60
+          -print_final_stats=1 -artifact_prefix=build-fuzz/artifacts/
+          build-fuzz/corpus/envelope
+
+      # libFuzzer prints only small inputs itself. With every saved input in the
+      # log, no artifact upload is needed.
+      - name: Print failing inputs
+        if: failure()
+        run: find build-fuzz/artifacts -type f -print -exec base64 {} \;
