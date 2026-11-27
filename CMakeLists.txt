@@ -7,6 +7,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 option(NILKEY_ENABLE_SANITIZERS "Build with AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
 option(NILKEY_WERROR "Treat compiler warnings as errors" ON)
+option(NILKEY_ENABLE_FUZZING "Build the libFuzzer targets for the parsers (Clang only)" OFF)
 
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
   set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
@@ -87,6 +88,22 @@ target_link_libraries(nilkey_core_test PUBLIC nilkey_options PkgConfig::SODIUM)
 target_compile_definitions(nilkey_core_test PUBLIC
   NILKEY_ALLOW_TEST_KDF
   NILKEY_TEST_MAX_KDF_MEM_KIB=1024)
+
+# The parsers again, with the coverage instrumentation libFuzzer steers by.
+# Only the fuzz targets link this library, so the flag stays off nilkey_options
+# and every other target. No test macros: the production KDF limits apply.
+if(NILKEY_ENABLE_FUZZING)
+  if(NOT CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+    message(FATAL_ERROR "NILKEY_ENABLE_FUZZING needs Clang (libFuzzer)")
+  endif()
+  if(NOT NILKEY_ENABLE_SANITIZERS)
+    message(FATAL_ERROR "NILKEY_ENABLE_FUZZING needs NILKEY_ENABLE_SANITIZERS=ON")
+  endif()
+  add_library(nilkey_fuzz_core STATIC src/tlv.cpp src/vault_format.cpp)
+  target_include_directories(nilkey_fuzz_core PUBLIC ${PROJECT_SOURCE_DIR}/include)
+  target_link_libraries(nilkey_fuzz_core PUBLIC nilkey_options)
+  target_compile_options(nilkey_fuzz_core PRIVATE -fsanitize=fuzzer-no-link -O1)
+endif()
 
 # cli.cpp prints the version for --version.
 target_compile_definitions(nilkey_core PRIVATE NILKEY_VERSION="${PROJECT_VERSION}")
