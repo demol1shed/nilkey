@@ -9,6 +9,12 @@ independent of the version of the program.
 
 ## [Unreleased]
 
+### Added
+
+- libFuzzer targets for the vault header parser and the TLV parser, built with
+  `-DNILKEY_ENABLE_FUZZING=ON` (Clang). Their seed inputs run as ordinary tests
+  in every build, and CI fuzzes each target for 60 seconds.
+
 ## [0.2.1] - 2026-11-27
 
 ### Changed

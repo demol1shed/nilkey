@@ -48,6 +48,35 @@ cmake --build build-release -j
 Warnings are errors by default. Pass `-DNILKEY_WERROR=OFF` to turn that off,
 for example when packaging with a newer compiler.
 
+### Fuzzing
+
+The header parser and the TLV parser have libFuzzer targets in `tests/fuzz/`.
+Every build replays their seed inputs as part of `ctest`. Fuzzing itself needs
+Clang with its libFuzzer runtime (on Ubuntu 24.04, the packages `clang-18` and
+`libclang-rt-18-dev`) and runs for as long as you allow it:
+
+```bash
+CXX=clang++-18 cmake -B build-fuzz -DCMAKE_BUILD_TYPE=Debug \
+  -DNILKEY_ENABLE_SANITIZERS=ON -DNILKEY_ENABLE_FUZZING=ON
+cmake --build build-fuzz -j --target \
+  fuzz_header fuzz_header_replay fuzz_envelope fuzz_envelope_replay
+
+mkdir -p build-fuzz/corpus/header build-fuzz/corpus/envelope build-fuzz/artifacts
+build-fuzz/tests/fuzz_header_replay --write-seeds build-fuzz/corpus/header
+build-fuzz/tests/fuzz_envelope_replay --write-seeds build-fuzz/corpus/envelope
+
+build-fuzz/tests/fuzz_header -max_total_time=60 -max_len=128 \
+  -artifact_prefix=build-fuzz/artifacts/ build-fuzz/corpus/header
+build-fuzz/tests/fuzz_envelope -max_total_time=60 \
+  -artifact_prefix=build-fuzz/artifacts/ build-fuzz/corpus/envelope
+```
+
+When a target fails, libFuzzer saves the input under `build-fuzz/artifacts/`.
+Run it again with the replay binary of the same target, for example
+`build-fuzz/tests/fuzz_envelope_replay build-fuzz/artifacts/crash-...`. After
+the fix, add those bytes to `FuzzSeeds()` in the harness, so that every later
+build tests them.
+
 ## Usage
 
 ```bash
