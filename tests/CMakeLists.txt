@@ -102,6 +102,23 @@ if(NOT NILKEY_ENABLE_SANITIZERS)
   set_tests_properties(test_cli_memlock PROPERTIES TIMEOUT 120)
 endif()
 
+# Parser fuzz harnesses (SPEC.md 10). Every build replays their seeds as an
+# ordinary test; NILKEY_ENABLE_FUZZING also builds the libFuzzer binaries,
+# which run until stopped and are therefore not registered with CTest.
+foreach(parser header envelope)
+  set(replay fuzz_${parser}_replay)
+  add_executable(${replay} fuzz/fuzz_${parser}.cpp fuzz/fuzz_replay_main.cpp)
+  target_link_libraries(${replay} PRIVATE nilkey_core)
+  add_test(NAME ${replay} COMMAND ${replay})
+  set_tests_properties(${replay} PROPERTIES ENVIRONMENT "${NILKEY_TEST_ENVIRONMENT}")
+
+  if(NILKEY_ENABLE_FUZZING)
+    add_executable(fuzz_${parser} fuzz/fuzz_${parser}.cpp)
+    target_link_libraries(fuzz_${parser} PRIVATE nilkey_fuzz_core)
+    target_link_options(fuzz_${parser} PRIVATE -fsanitize=fuzzer)
+  endif()
+endforeach()
+
 # Gate self-checks: each of these must fail for the stated reason.
 add_executable(test_framework_failure test_framework_failure.cpp)
 target_link_libraries(test_framework_failure PRIVATE nilkey_core)
