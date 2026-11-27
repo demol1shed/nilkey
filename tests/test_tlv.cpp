@@ -390,6 +390,19 @@ NILKEY_TEST(parse_envelope_rejects_oversized_record_count) {
   NILKEY_EXPECT(EnvelopeRejected(Raw({0xA0, 0x86, 0x01, 0x00, 0, 0, 0, 0})));  // 100000
 }
 
+NILKEY_TEST(parse_envelope_stops_at_the_record_limit) {
+  // Real records, so that only the limit itself can reject the larger envelope.
+  std::vector<Bytes> records;
+  records.reserve(nilkey::kMaxRecords + 1);
+  for (std::uint32_t i = 0; i < nilkey::kMaxRecords; ++i) {
+    records.push_back(Rec(std::to_string(i), ""));
+  }
+  NILKEY_EXPECT(ParseEnvelope(S(Env(records))).ok());
+
+  records.push_back(Rec("extra", ""));
+  NILKEY_EXPECT(EnvelopeRejected(Env(records)));
+}
+
 NILKEY_TEST(parse_envelope_rejects_duplicate_names) {
   NILKEY_EXPECT(EnvelopeRejected(Env({Rec("a", "p1"), Rec("a", "p2")})));
   // Not adjacent in file order.
