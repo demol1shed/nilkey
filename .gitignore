@@ -7,6 +7,12 @@ CMakeFiles/
 *.o
 *.a
 
+# Inputs libFuzzer saves when it finds a failure
+crash-*
+leak-*
+timeout-*
+oom-*
+
 # Never commit vault files or key material
 *.vault
 *.key
