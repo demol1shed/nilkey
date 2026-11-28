@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "nilkey/tlv.hpp"
+#include "nilkey/vault_format.hpp"
 #include "test_framework.hpp"
 
 using nilkey::ErrorCode;
@@ -524,12 +525,53 @@ NILKEY_TEST(write_record_rejects_invalid_records) {
   auto r2 = WriteRecord(w2, bad_user);
   NILKEY_EXPECT(!r2.ok() && r2.error().code == ErrorCode::kInvalidArgument);
 
+  // Room for the whole record, so that only the name limit can reject it.
+  Bytes large(2 * nilkey::kMaxNameSize);
+  const Bytes longest(nilkey::kMaxNameSize, std::byte{'n'});
+  Record at_limit{};
+  at_limit.name = longest;
+  TlvWriter w3(large);
+  NILKEY_EXPECT(WriteRecord(w3, at_limit).ok());
+
   const Bytes long_name(nilkey::kMaxNameSize + 1, std::byte{'n'});
   Record too_long{};
   too_long.name = long_name;
-  TlvWriter w3(out);
-  auto r3 = WriteRecord(w3, too_long);
-  NILKEY_EXPECT(!r3.ok() && r3.error().code == ErrorCode::kOutOfRange);
+  TlvWriter w4(large);
+  auto r4 = WriteRecord(w4, too_long);
+  NILKEY_EXPECT(!r4.ok() && r4.error().code == ErrorCode::kOutOfRange);
+  auto size4 = RecordSize(too_long);
+  NILKEY_EXPECT(!size4.ok() && size4.error().code == ErrorCode::kOutOfRange);
+}
+
+NILKEY_TEST(write_record_rejects_a_field_over_the_size_limit) {
+  const Bytes name = Str("a");
+  const Bytes huge(nilkey::kMaxPlaintextSize + 1, std::byte{'x'});
+  // Room for the whole record, so that only the field limit can reject it.
+  Bytes out(huge.size() + 256);
+  for (auto field : {&Record::username, &Record::password, &Record::url, &Record::notes}) {
+    Record rec{};
+    rec.name = name;
+    rec.*field = huge;
+    TlvWriter writer(out);
+    auto r = WriteRecord(writer, rec);
+    NILKEY_EXPECT(!r.ok() && r.error().code == ErrorCode::kOutOfRange);
+  }
+}
+
+NILKEY_TEST(record_size_limits_the_sum_of_the_fields) {
+  // A one byte name, an empty password and two timestamps take 37 bytes, and
+  // the header of the notes field 5 more. `notes` is one byte too long.
+  const Bytes name = Str("a");
+  const Bytes notes(nilkey::kMaxPlaintextSize - 42 + 1, std::byte{'x'});
+  Record rec{};
+  rec.name = name;
+  rec.notes = S(notes).first(notes.size() - 1);
+  auto fits = RecordSize(rec);
+  NILKEY_EXPECT(fits.ok() && fits.value() == nilkey::kMaxPlaintextSize);
+
+  rec.notes = notes;
+  auto over = RecordSize(rec);
+  NILKEY_EXPECT(!over.ok() && over.error().code == ErrorCode::kOutOfRange);
 }
 
 NILKEY_TEST(writer_put_u32_is_little_endian_and_bounded) {
