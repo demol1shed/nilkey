@@ -130,6 +130,27 @@ bool WaitsForTheLock(const TempDir& dir, const std::string& vault,
   return answered && waiting && child.Wait(kWaitMs) == 0 && !SameBytes(ReadFile(vault), before);
 }
 
+// The test holds the lock and types a wrong master password. A command that asks
+// for nothing after it opens the vault only once, under the lock, so it cannot
+// report the password as wrong until the lock is let go.
+bool ReportsAWrongMasterOnlyUnderTheLock(const TempDir& dir, const std::string& vault,
+                                         const std::vector<std::string>& args) {
+  constexpr const char* kWrong = "wrong password or corrupted vault file";
+  const Bytes before = ReadFile(vault);
+  const int lock_fd = open((vault + ".lock").c_str(), O_RDWR | O_CREAT | O_CLOEXEC, 0600);
+  if (lock_fd < 0 || flock(lock_fd, LOCK_EX) != 0) return false;
+
+  PtyChild child = StartCli(dir, vault, args);
+  const bool answered = Reply(child, {{kMasterPrompt, "not the master"}});
+  child.Pump(1000);
+  // The output is checked too: a child that has just exited may still run.
+  const bool silent = child.Running() && !Has(child.output(), kWrong);
+
+  if (close(lock_fd) != 0) return false;  // Releases the lock.
+  return answered && silent && child.Wait(kWaitMs) == 1 && Has(child.output(), kWrong) &&
+         SameBytes(ReadFile(vault), before);
+}
+
 }  // namespace
 
 // ---- update ----
@@ -658,6 +679,18 @@ NILKEY_TEST(update_delete_and_passwd_wait_for_the_vault_lock) {
   NILKEY_EXPECT(WaitsForTheLock(dir, vault, {"delete", "beta"},
                                 {{kConfirmPrompt, "y"}, {kMasterPrompt, master}}));
   NILKEY_EXPECT(WaitsForTheLock(dir, vault, {"passwd"}, Passwd(master, "other master", "other master")));
+}
+
+NILKEY_TEST(add_and_update_with_no_further_prompt_do_not_check_the_master_early) {
+  TempDir dir;
+  NILKEY_EXPECT(dir.ok());
+  const std::string vault = dir.Path("v.vault");
+  NILKEY_EXPECT(Seed(dir, vault, "master pass e1"));
+
+  NILKEY_EXPECT(ReportsAWrongMasterOnlyUnderTheLock(dir, vault, {"add", "delta", "--generate"}));
+  NILKEY_EXPECT(ReportsAWrongMasterOnlyUnderTheLock(dir, vault, {"update", "alpha", "--generate"}));
+  NILKEY_EXPECT(ReportsAWrongMasterOnlyUnderTheLock(dir, vault,
+                                                    {"update", "alpha", "--username", "bob"}));
 }
 
 NILKEY_TEST_MAIN()
