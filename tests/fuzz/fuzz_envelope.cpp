@@ -31,7 +31,8 @@ std::uint32_t Le32(std::span<const std::byte> bytes, std::size_t off) {
 }
 
 // The records of an accepted envelope, after checking that they lie back to back
-// behind their length prefixes, fill it exactly and have different names.
+// behind their length prefixes, fill it exactly, have different names and stay
+// within the field limit.
 std::vector<nilkey::Record> CheckedRecords(
     std::span<const std::byte> envelope, const std::vector<nilkey::RecordLocation>& locations) {
   NILKEY_FUZZ_CHECK(envelope.size() >= 4 && Le32(envelope, 0) == locations.size());
@@ -46,8 +47,14 @@ std::vector<nilkey::Record> CheckedRecords(
     NILKEY_FUZZ_CHECK(location.length <= envelope.size() - location.offset);
     end = location.offset + location.length;
 
-    const auto record = nilkey::ParseRecord(envelope.subspan(location.offset, location.length));
+    const auto bytes = envelope.subspan(location.offset, location.length);
+    const auto record = nilkey::ParseRecord(bytes);
     NILKEY_FUZZ_CHECK(record.ok());
+    std::size_t fields = 0;
+    for (std::span<const std::byte> rest = bytes; !rest.empty(); ++fields) {
+      NILKEY_FUZZ_CHECK(nilkey::NextField(rest).ok());
+    }
+    NILKEY_FUZZ_CHECK(fields <= 64);  // SPEC.md 6.4.
     const nilkey::Record& r = record.value();
     NILKEY_FUZZ_CHECK(!r.name.empty() && r.name.size() <= nilkey::kMaxNameSize);
     NILKEY_FUZZ_CHECK(names.insert(Bytes(r.name.begin(), r.name.end())).second);
@@ -89,27 +96,37 @@ std::span<const std::byte> Text(std::string_view s) {
   return std::as_bytes(std::span<const char>(s.data(), s.size()));
 }
 
-// One encoded record, optionally followed by a field of a type this version
+// One encoded record, followed by `unknown_fields` fields of types this version
 // does not know.
-Bytes SeedRecord(const nilkey::Record& record, bool unknown_field) {
-  Bytes out(256);
+Bytes SeedRecord(const nilkey::Record& record, unsigned unknown_fields) {
+  Bytes out(256 + std::size_t{unknown_fields} * 10);
   nilkey::TlvWriter writer(out);
   NILKEY_FUZZ_CHECK(nilkey::WriteRecord(writer, record).ok());
-  if (unknown_field) NILKEY_FUZZ_CHECK(writer.PutField(0x7F, Text("later")).ok());
+  for (unsigned i = 0; i < unknown_fields; ++i) {
+    const auto type = static_cast<std::uint8_t>(0x10 + i);
+    NILKEY_FUZZ_CHECK(writer.PutField(type, Text("later")).ok());
+  }
   out.resize(writer.written());
   return out;
 }
 
-Bytes SeedEnvelope(const std::vector<Bytes>& records) {
-  Bytes out(1024);
+Bytes Envelope(const std::vector<Bytes>& records) {
+  std::size_t size = 4;
+  for (const Bytes& record : records) size += 4 + record.size();
+  Bytes out(size);
   nilkey::TlvWriter writer(out);
   NILKEY_FUZZ_CHECK(writer.PutU32(static_cast<std::uint32_t>(records.size())).ok());
   for (const Bytes& record : records) {
     NILKEY_FUZZ_CHECK(writer.PutU32(static_cast<std::uint32_t>(record.size())).ok());
     NILKEY_FUZZ_CHECK(writer.PutRaw(record).ok());
   }
-  out.resize(writer.written());
-  // A seed the parser rejects would leave the checks above unused.
+  return out;
+}
+
+// An envelope the parser must accept; a rejected one would leave the checks
+// above unused.
+Bytes SeedEnvelope(const std::vector<Bytes>& records) {
+  Bytes out = Envelope(records);
   NILKEY_FUZZ_CHECK(nilkey::ParseEnvelope(out).ok());
   return out;
 }
@@ -160,8 +177,13 @@ std::vector<std::vector<std::byte>> FuzzSeeds() {
   // One byte away from `minimal`, so that a single mutation repeats a name.
   const nilkey::Record twin{Text("maim"), {}, Text(""), {}, {}, -1, 0};
 
-  return {SeedEnvelope({}), SeedEnvelope({SeedRecord(full, false)}),
-          SeedEnvelope({SeedRecord(full, true)}),
-          SeedEnvelope({SeedRecord(full, false), SeedRecord(minimal, false)}),
-          SeedEnvelope({SeedRecord(minimal, false), SeedRecord(twin, false)})};
+  // `minimal` has 4 fields: 60 more reach the limit of 64, and 61 pass it. That
+  // last seed has to be rejected; if it is not, the field count check fails.
+  return {SeedEnvelope({}),
+          SeedEnvelope({SeedRecord(full, 0)}),
+          SeedEnvelope({SeedRecord(full, 1)}),
+          SeedEnvelope({SeedRecord(full, 0), SeedRecord(minimal, 0)}),
+          SeedEnvelope({SeedRecord(minimal, 0), SeedRecord(twin, 0)}),
+          SeedEnvelope({SeedRecord(minimal, 60)}),
+          Envelope({SeedRecord(minimal, 61)})};
 }
